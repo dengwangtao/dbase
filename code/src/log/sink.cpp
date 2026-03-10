@@ -1,6 +1,7 @@
 #include "dbase/log/sink.h"
 
 #include "dbase/log/log.h"
+#include "dbase/time/time.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -42,13 +43,11 @@ void ensureParentDirectory(const std::filesystem::path& filePath)
 void removeIfExists(const std::filesystem::path& filePath)
 {
     std::error_code ec;
-    const bool removed = std::filesystem::remove(filePath, ec);
+    std::filesystem::remove(filePath, ec);
     if (ec)
     {
         throw std::runtime_error("remove failed: " + filePath.string() + ", " + ec.message());
     }
-
-    (void)removed;
 }
 
 void renameFile(const std::filesystem::path& from, const std::filesystem::path& to)
@@ -60,6 +59,11 @@ void renameFile(const std::filesystem::path& from, const std::filesystem::path& 
         throw std::runtime_error(
                 "rename failed: " + from.string() + " -> " + to.string() + ", " + ec.message());
     }
+}
+
+[[nodiscard]] std::string dateTextFromTimestampUs(std::int64_t timestampUs)
+{
+    return dbase::time::formatTimestampMs(timestampUs / 1000, "%Y-%m-%d");
 }
 }  // namespace
 
@@ -267,6 +271,89 @@ void RotatingFileSink::rotateNoLock()
     }
 
     openNoLock(true);
+}
+
+DailyFileSink::DailyFileSink(std::filesystem::path filePath, bool truncate)
+    : m_filePath(std::move(filePath))
+{
+    openForDateNoLock(dateTextFromTimestampUs(dbase::time::nowUs()), truncate);
+}
+
+const std::filesystem::path& DailyFileSink::filePath() const noexcept
+{
+    return m_filePath;
+}
+
+const std::string& DailyFileSink::currentDate() const noexcept
+{
+    return m_currentDate;
+}
+
+void DailyFileSink::write(const LogEvent& event, std::string_view formatted)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    const auto eventDate = dateTextFromTimestampUs(event.timestampUs);
+
+    if (!m_stream.is_open() || eventDate != m_currentDate)
+    {
+        openForDateNoLock(eventDate, false);
+    }
+
+    m_stream << formatted << '\n';
+    if (!m_stream.good())
+    {
+        throw std::runtime_error("DailyFileSink write failed: " + datedPath(m_currentDate).string());
+    }
+}
+
+void DailyFileSink::flush()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_stream.is_open())
+    {
+        m_stream.flush();
+        if (!m_stream.good())
+        {
+            throw std::runtime_error("DailyFileSink flush failed: " + datedPath(m_currentDate).string());
+        }
+    }
+}
+
+std::filesystem::path DailyFileSink::datedPath(std::string_view date) const
+{
+    const auto parent = m_filePath.parent_path();
+    const auto stem = m_filePath.stem().string();
+    const auto ext = m_filePath.extension().string();
+
+    if (ext.empty())
+    {
+        return parent / std::filesystem::path(stem + "." + std::string(date));
+    }
+
+    return parent / std::filesystem::path(stem + "." + std::string(date) + ext);
+}
+
+void DailyFileSink::openForDateNoLock(std::string date, bool truncate)
+{
+    if (m_stream.is_open())
+    {
+        m_stream.flush();
+        m_stream.close();
+    }
+
+    const auto targetPath = datedPath(date);
+    ensureParentDirectory(targetPath);
+
+    const auto mode = std::ios::out | std::ios::binary | (truncate ? std::ios::trunc : std::ios::app);
+    m_stream.open(targetPath, mode);
+    if (!m_stream.is_open())
+    {
+        throw std::runtime_error("DailyFileSink open failed: " + targetPath.string());
+    }
+
+    m_currentDate = std::move(date);
 }
 
 }  // namespace dbase::log

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
 
 namespace dbase::log
@@ -76,6 +77,28 @@ class RotatingFileSink final : public Sink
         std::ofstream m_stream;
         std::size_t m_maxFileSize{0};
         std::size_t m_maxFiles{0};
+        std::mutex m_mutex;
+};
+
+class DailyFileSink final : public Sink
+{
+    public:
+        explicit DailyFileSink(std::filesystem::path filePath, bool truncate = false);
+
+        [[nodiscard]] const std::filesystem::path& filePath() const noexcept;
+        [[nodiscard]] const std::string& currentDate() const noexcept;
+
+        void write(const LogEvent& event, std::string_view formatted) override;
+        void flush() override;
+
+    private:
+        [[nodiscard]] std::filesystem::path datedPath(std::string_view date) const;
+        void openForDateNoLock(std::string date, bool truncate);
+
+    private:
+        std::filesystem::path m_filePath;
+        std::ofstream m_stream;
+        std::string m_currentDate;
         std::mutex m_mutex;
 };
 
