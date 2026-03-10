@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -45,6 +46,36 @@ class FileSink final : public Sink
     private:
         std::filesystem::path m_filePath;
         std::ofstream m_stream;
+        std::mutex m_mutex;
+};
+
+class RotatingFileSink final : public Sink
+{
+    public:
+        RotatingFileSink(
+                std::filesystem::path filePath,
+                std::size_t maxFileSize,
+                std::size_t maxFiles,
+                bool truncate = false);
+
+        [[nodiscard]] const std::filesystem::path& filePath() const noexcept;
+        [[nodiscard]] std::size_t maxFileSize() const noexcept;
+        [[nodiscard]] std::size_t maxFiles() const noexcept;
+
+        void write(const LogEvent& event, std::string_view formatted) override;
+        void flush() override;
+
+    private:
+        [[nodiscard]] std::filesystem::path rotatedPath(std::size_t index) const;
+        [[nodiscard]] std::size_t currentFileSizeNoLock() const;
+        void openNoLock(bool truncate);
+        void rotateNoLock();
+
+    private:
+        std::filesystem::path m_filePath;
+        std::ofstream m_stream;
+        std::size_t m_maxFileSize{0};
+        std::size_t m_maxFiles{0};
         std::mutex m_mutex;
 };
 
