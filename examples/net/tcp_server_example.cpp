@@ -1,9 +1,8 @@
 #include "dbase/log/log.h"
+#include "dbase/net/buffer.h"
 #include "dbase/net/event_loop.h"
 #include "dbase/net/socket_ops.h"
 #include "dbase/net/tcp_server.h"
-#include "dbase/thread/current_thread.h"
-#include "dbase/thread/thread.h"
 
 int main()
 {
@@ -22,11 +21,16 @@ int main()
         dbase::net::EventLoop loop;
         dbase::net::InetAddress listenAddr(9781, true, false);
 
-        dbase::net::TcpServer server(&loop, listenAddr, "tcp-conn-demo", false, false);
+        dbase::net::TcpServer server(&loop, listenAddr, "echo-server", false, false);
 
         server.setConnectionCallback(
                 [](const dbase::net::TcpConnection::Ptr& conn)
                 {
+                    if (conn->disconnected())
+                    {
+                        DBASE_LOG_INFO("connection {} disconnected", conn->name());
+                        return;
+                    }
                     DBASE_LOG_INFO(
                             "connection {} state={} peer={}",
                             conn->name(),
@@ -38,7 +42,7 @@ int main()
                 [](const dbase::net::TcpConnection::Ptr& conn, dbase::net::Buffer& buffer)
                 {
                     const auto msg = buffer.retrieveAllAsString();
-                    DBASE_LOG_INFO("recv from {}: {}", conn->name(), msg);
+                    DBASE_LOG_INFO("recv {} bytes from {}: {}", msg.size(), conn->name(), msg);
                     conn->send(msg);
                 });
 
@@ -49,22 +53,9 @@ int main()
                 });
 
         server.start();
-        DBASE_LOG_INFO("tcp connection example listen on {}", listenAddr.toIpPort());
+        DBASE_LOG_INFO("tcp server listen on {}", listenAddr.toIpPort());
 
-        dbase::thread::Thread quitter(
-                [&loop](std::stop_token)
-                {
-                    dbase::thread::current_thread::sleepForMs(15000);
-                    loop.quit();
-                },
-                "tcp-conn-demo-quitter");
-
-        quitter.start();
         loop.loop();
-        quitter.join();
-
-        dbase::net::SocketOps::cleanup();
-        return 0;
     }
     catch (const std::exception& ex)
     {
@@ -72,4 +63,19 @@ int main()
         dbase::net::SocketOps::cleanup();
         return 1;
     }
+
+    dbase::net::SocketOps::cleanup();
+    return 0;
 }
+
+/*
+$client = New-Object System.Net.Sockets.TcpClient
+$client.Connect("127.0.0.1", 9781)
+$stream = $client.GetStream()
+$bytes = [System.Text.Encoding]::UTF8.GetBytes("hello`n")
+$stream.Write($bytes, 0, $bytes.Length)
+$buf = New-Object byte[] 1024
+$n = $stream.Read($buf, 0, $buf.Length)
+[System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
+$client.Close()
+*/

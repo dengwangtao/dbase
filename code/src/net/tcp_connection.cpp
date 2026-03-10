@@ -45,15 +45,44 @@ int lastSocketErrorCode() noexcept
 }  // namespace
 
 TcpConnection::TcpConnection(
+        EventLoop* loop,
         std::string name,
         Socket socket,
         const InetAddress& localAddr,
         const InetAddress& peerAddr)
-    : m_name(name.empty() ? "conn" : std::move(name)),
+    : m_loop(loop),
+      m_name(name.empty() ? "conn" : std::move(name)),
       m_socket(std::move(socket)),
       m_localAddr(localAddr),
-      m_peerAddr(peerAddr)
+      m_peerAddr(peerAddr),
+      m_channel(std::make_unique<Channel>(loop, m_socket.fd()))
 {
+    if (m_loop == nullptr)
+    {
+        throw std::invalid_argument("TcpConnection loop is null");
+    }
+
+    m_channel->setReadCallback([this]()
+                               { handleRead(); });
+    m_channel->setWriteCallback([this]()
+                                { handleWrite(); });
+    m_channel->setCloseCallback([this]()
+                                { handleClose(); });
+    m_channel->setErrorCallback([this]()
+                                { handleError(); });
+}
+
+TcpConnection::~TcpConnection()
+{
+    if (m_channel)
+    {
+        m_channel->disableAll();
+    }
+}
+
+EventLoop* TcpConnection::ownerLoop() const noexcept
+{
+    return m_loop;
 }
 
 const std::string& TcpConnection::name() const noexcept
@@ -111,6 +140,11 @@ const Buffer& TcpConnection::outputBuffer() const noexcept
     return m_outputBuffer;
 }
 
+void TcpConnection::setConnectionCallback(ConnectionCallback cb)
+{
+    m_connectionCallback = std::move(cb);
+}
+
 void TcpConnection::setMessageCallback(MessageCallback cb)
 {
     m_messageCallback = std::move(cb);
@@ -138,58 +172,53 @@ void TcpConnection::connectEstablished()
         throw std::logic_error("TcpConnection::connectEstablished invalid state");
     }
 
+    m_loop->assertInLoopThread();
+
     m_state = State::Connected;
+    m_channel->enableReading();
+
+    if (m_connectionCallback)
+    {
+        m_connectionCallback(shared_from_this());
+    }
 }
 
 void TcpConnection::connectDestroyed()
 {
-    if (m_state == State::Connected || m_state == State::Disconnecting)
+    m_loop->assertInLoopThread();
+
+    if (m_state == State::Connected)
     {
         m_state = State::Disconnected;
+        m_channel->disableAll();
+
+        if (m_connectionCallback)
+        {
+            m_connectionCallback(shared_from_this());
+        }
+    }
+
+    if (m_channel)
+    {
+        m_channel->remove();
     }
 }
 
 void TcpConnection::send(std::string_view data)
 {
-    if (!connected() && m_state != State::Disconnecting)
-    {
-        throw std::logic_error("TcpConnection::send on disconnected connection");
-    }
-
-    if (data.empty())
+    if (m_state == State::Disconnected)
     {
         return;
     }
 
-    if (m_outputBuffer.readableBytes() == 0)
+    if (m_loop->isInLoopThread())
     {
-        const int n = SocketOps::write(m_socket.fd(), data.data(), data.size());
-        if (n >= 0)
-        {
-            const auto written = static_cast<std::size_t>(n);
-            if (written < data.size())
-            {
-                m_outputBuffer.append(data.data() + written, data.size() - written);
-            }
-            else if (m_writeCompleteCallback)
-            {
-                m_writeCompleteCallback(shared_from_this());
-            }
-            return;
-        }
-
-        const int err = lastSocketErrorCode();
-        if (isWouldBlockError(err))
-        {
-            m_outputBuffer.append(data);
-            return;
-        }
-
-        handleError(err);
-        return;
+        sendInLoop(data);
     }
-
-    m_outputBuffer.append(data);
+    else
+    {
+        throw std::runtime_error("TcpConnection::send cross-thread is not supported yet");
+    }
 }
 
 void TcpConnection::send(Buffer& buffer)
@@ -203,90 +232,173 @@ void TcpConnection::shutdown()
     if (m_state == State::Connected)
     {
         m_state = State::Disconnecting;
-        if (m_outputBuffer.readableBytes() == 0)
+
+        if (m_loop->isInLoopThread())
         {
-            m_socket.shutdownWrite();
+            shutdownInLoop();
+        }
+        else
+        {
+            throw std::runtime_error("TcpConnection::shutdown cross-thread is not supported yet");
         }
     }
 }
 
 void TcpConnection::forceClose()
 {
-    if (m_state != State::Disconnected)
+    if (m_state == State::Connected || m_state == State::Disconnecting)
     {
-        handleClose();
+        if (m_loop->isInLoopThread())
+        {
+            forceCloseInLoop();
+        }
+        else
+        {
+            throw std::runtime_error("TcpConnection::forceClose cross-thread is not supported yet");
+        }
     }
 }
 
-std::size_t TcpConnection::receiveOnce(std::size_t maxBytes)
+void TcpConnection::sendInLoop(std::string_view data)
 {
-    if (!connected() && m_state != State::Disconnecting)
+    m_loop->assertInLoopThread();
+
+    if (m_state == State::Disconnected)
     {
-        return 0;
+        return;
     }
 
-    if (maxBytes == 0)
+    if (data.empty())
     {
-        return 0;
+        return;
     }
 
-    std::vector<char> buf(maxBytes);
+    if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
+    {
+        const int n = SocketOps::write(m_socket.fd(), data.data(), data.size());
+        if (n >= 0)
+        {
+            const auto written = static_cast<std::size_t>(n);
+            if (written < data.size())
+            {
+                m_outputBuffer.append(data.data() + written, data.size() - written);
+                m_channel->enableWriting();
+            }
+            else if (m_writeCompleteCallback)
+            {
+                m_writeCompleteCallback(shared_from_this());
+            }
+            return;
+        }
+
+        const int err = lastSocketErrorCode();
+        if (isWouldBlockError(err))
+        {
+            m_outputBuffer.append(data);
+            m_channel->enableWriting();
+            return;
+        }
+
+        handleError();
+        return;
+    }
+
+    m_outputBuffer.append(data);
+    if (!m_channel->isWriting())
+    {
+        m_channel->enableWriting();
+    }
+}
+
+void TcpConnection::shutdownInLoop()
+{
+    m_loop->assertInLoopThread();
+
+    if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
+    {
+        m_socket.shutdownWrite();
+    }
+}
+
+void TcpConnection::forceCloseInLoop()
+{
+    m_loop->assertInLoopThread();
+    handleClose();
+}
+
+void TcpConnection::handleRead()
+{
+    m_loop->assertInLoopThread();
+
+    std::vector<char> buf(64 * 1024);
     const int n = SocketOps::read(m_socket.fd(), buf.data(), buf.size());
 
     if (n > 0)
     {
-        const auto readBytes = static_cast<std::size_t>(n);
-        m_inputBuffer.append(buf.data(), readBytes);
-
+        m_inputBuffer.append(buf.data(), static_cast<std::size_t>(n));
         if (m_messageCallback)
         {
             m_messageCallback(shared_from_this(), m_inputBuffer);
         }
-
-        return readBytes;
+        return;
     }
 
     if (n == 0)
     {
         handleClose();
-        return 0;
+        return;
     }
 
     const int err = lastSocketErrorCode();
     if (isWouldBlockError(err))
     {
-        return 0;
+        return;
     }
 
     if (isConnectionResetError(err))
     {
         handleClose();
-        return 0;
+        return;
     }
 
-    handleError(err);
-    return 0;
+    handleError();
 }
 
-std::size_t TcpConnection::flushOutput()
+void TcpConnection::handleWrite()
 {
+    m_loop->assertInLoopThread();
+
+    if (!m_channel->isWriting())
+    {
+        return;
+    }
+
     if (m_outputBuffer.readableBytes() == 0)
     {
+        m_channel->disableWriting();
+
+        if (m_writeCompleteCallback)
+        {
+            m_writeCompleteCallback(shared_from_this());
+        }
+
         if (m_state == State::Disconnecting)
         {
-            m_socket.shutdownWrite();
+            shutdownInLoop();
         }
-        return 0;
+
+        return;
     }
 
     const int n = SocketOps::write(m_socket.fd(), m_outputBuffer.peek(), m_outputBuffer.readableBytes());
     if (n > 0)
     {
-        const auto written = static_cast<std::size_t>(n);
-        m_outputBuffer.retrieve(written);
+        m_outputBuffer.retrieve(static_cast<std::size_t>(n));
 
         if (m_outputBuffer.readableBytes() == 0)
         {
+            m_channel->disableWriting();
+
             if (m_writeCompleteCallback)
             {
                 m_writeCompleteCallback(shared_from_this());
@@ -294,44 +406,52 @@ std::size_t TcpConnection::flushOutput()
 
             if (m_state == State::Disconnecting)
             {
-                m_socket.shutdownWrite();
+                shutdownInLoop();
             }
         }
 
-        return written;
+        return;
     }
 
-    if (n < 0)
+    const int err = lastSocketErrorCode();
+    if (isWouldBlockError(err))
     {
-        const int err = lastSocketErrorCode();
-        if (isWouldBlockError(err))
-        {
-            return 0;
-        }
-
-        handleError(err);
+        return;
     }
 
-    return 0;
+    handleError();
 }
 
 void TcpConnection::handleClose()
 {
+    m_loop->assertInLoopThread();
+
     if (m_state == State::Disconnected)
     {
         return;
     }
 
     m_state = State::Disconnected;
+    m_channel->disableAll();
+
+    auto self = shared_from_this();
+
+    if (m_connectionCallback)
+    {
+        m_connectionCallback(self);
+    }
 
     if (m_closeCallback)
     {
-        m_closeCallback(shared_from_this());
+        m_closeCallback(self);
     }
 }
 
-void TcpConnection::handleError(int err)
+void TcpConnection::handleError()
 {
+    m_loop->assertInLoopThread();
+
+    const int err = SocketOps::getSocketError(m_socket.fd());
     if (m_errorCallback)
     {
         m_errorCallback(shared_from_this(), err);
