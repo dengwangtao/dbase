@@ -173,6 +173,18 @@ PatternStyle Logger::patternStyle() const noexcept
     return m_formatter.style();
 }
 
+void Logger::setFlushOn(Level level) noexcept
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_flushOn = level;
+}
+
+Level Logger::flushOn() const noexcept
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_flushOn;
+}
+
 void Logger::addSink(std::shared_ptr<Sink> sink)
 {
     if (!sink)
@@ -188,6 +200,21 @@ void Logger::clearSinks()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_sinks.clear();
+}
+
+void Logger::flush()
+{
+    std::vector<std::shared_ptr<Sink>> sinksCopy;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        sinksCopy = m_sinks;
+    }
+
+    for (const auto& sink : sinksCopy)
+    {
+        sink->flush();
+    }
 }
 
 LogEvent Logger::buildEvent(
@@ -214,6 +241,7 @@ void Logger::log(
 {
     std::vector<std::shared_ptr<Sink>> sinksCopy;
     Formatter formatterCopy;
+    Level flushOnLevel{Level::Fatal};
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -225,6 +253,7 @@ void Logger::log(
 
         sinksCopy = m_sinks;
         formatterCopy = m_formatter;
+        flushOnLevel = m_flushOn;
     }
 
     const auto event = buildEvent(level, message, location);
@@ -233,6 +262,14 @@ void Logger::log(
     for (const auto& sink : sinksCopy)
     {
         sink->write(event, formatted);
+    }
+
+    if (static_cast<int>(level) >= static_cast<int>(flushOnLevel))
+    {
+        for (const auto& sink : sinksCopy)
+        {
+            sink->flush();
+        }
     }
 }
 
@@ -294,6 +331,11 @@ void setDefaultPatternStyle(PatternStyle style) noexcept
     defaultLogger().setPatternStyle(style);
 }
 
+void setDefaultFlushOn(Level level) noexcept
+{
+    defaultLogger().setFlushOn(level);
+}
+
 void addDefaultSink(std::shared_ptr<Sink> sink)
 {
     defaultLogger().addSink(std::move(sink));
@@ -304,6 +346,16 @@ void resetDefaultSinks()
     auto& logger = defaultLogger();
     logger.clearSinks();
     logger.addSink(std::make_shared<ConsoleSink>());
+}
+
+void flushDefaultLogger()
+{
+    defaultLogger().flush();
+}
+
+void clearDefaultSinks()
+{
+    defaultLogger().clearSinks();
 }
 
 void log(

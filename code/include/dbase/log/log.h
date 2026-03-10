@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -74,13 +75,25 @@ class Logger
         void setPatternStyle(PatternStyle style) noexcept;
         [[nodiscard]] PatternStyle patternStyle() const noexcept;
 
+        void setFlushOn(Level level) noexcept;
+        [[nodiscard]] Level flushOn() const noexcept;
+
         void addSink(std::shared_ptr<Sink> sink);
         void clearSinks();
+        void flush();
 
-        void log(Level level, std::string_view message, const std::source_location& location = std::source_location::current());
+        void log(
+                Level level,
+                std::string_view message,
+                const std::source_location& location = std::source_location::current());
 
         template <typename... Args>
-        void logf(Level level, const std::source_location& location, std::format_string<Args...> fmt, Args&&... args)
+        void logf(
+                Level level,
+                const std::source_location& location,
+                std::format_string<Args...>
+                        fmt,
+                Args&&... args)
         {
             if (!shouldLog(level))
             {
@@ -91,11 +104,15 @@ class Logger
         }
 
     private:
-        [[nodiscard]] LogEvent buildEvent(Level level, std::string_view message, const std::source_location& location) const;
+        [[nodiscard]] LogEvent buildEvent(
+                Level level,
+                std::string_view message,
+                const std::source_location& location) const;
 
     private:
         mutable std::mutex m_mutex;
         Level m_level{Level::Info};
+        Level m_flushOn{Level::Error};
         Formatter m_formatter;
         std::vector<std::shared_ptr<Sink>> m_sinks;
 };
@@ -107,13 +124,24 @@ Logger& defaultLogger();
 
 void setDefaultLevel(Level level) noexcept;
 void setDefaultPatternStyle(PatternStyle style) noexcept;
+void setDefaultFlushOn(Level level) noexcept;
 void addDefaultSink(std::shared_ptr<Sink> sink);
 void resetDefaultSinks();
+void flushDefaultLogger();
+void clearDefaultSinks();
 
-void log(Level level, std::string_view message, const std::source_location& location = std::source_location::current());
+void log(
+        Level level,
+        std::string_view message,
+        const std::source_location& location = std::source_location::current());
 
 template <typename... Args>
-void logf(Level level, const std::source_location& location, std::format_string<Args...> fmt, Args&&... args)
+void logf(
+        Level level,
+        const std::source_location& location,
+        std::format_string<Args...>
+                fmt,
+        Args&&... args)
 {
     if (!defaultLogger().shouldLog(level))
     {

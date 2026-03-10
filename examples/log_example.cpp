@@ -3,8 +3,10 @@
 
 int main()
 {
+    dbase::log::resetDefaultSinks();
     dbase::log::setDefaultLevel(dbase::log::Level::Trace);
     dbase::log::setDefaultPatternStyle(dbase::log::PatternStyle::Threaded);
+    dbase::log::setDefaultFlushOn(dbase::log::Level::Error);
 
     std::thread t([]()
                   {
