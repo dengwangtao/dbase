@@ -1,0 +1,8 @@
+function(dbase_print_platform_info)
+    message(STATUS "System name: ${CMAKE_SYSTEM_NAME}")
+    message(STATUS "System version: ${CMAKE_SYSTEM_VERSION}")
+    message(STATUS "C++ compiler: ${CMAKE_CXX_COMPILER_ID}")
+    message(STATUS "C++ compiler version: ${CMAKE_CXX_COMPILER_VERSION}")
+    message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+    message(STATUS "Build shared libs: ${DBASE_BUILD_SHARED}")
+endfunction()

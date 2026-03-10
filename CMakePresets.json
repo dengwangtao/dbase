@@ -1,0 +1,235 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+        "DBASE_BUILD_SHARED": "OFF",
+        "DBASE_BUILD_TESTS": "ON",
+        "DBASE_BUILD_BENCHMARKS": "OFF",
+        "DBASE_BUILD_EXAMPLES": "ON",
+        "DBASE_ENABLE_INSTALL": "ON",
+        "DBASE_ENABLE_WARNINGS": "ON",
+        "DBASE_ENABLE_WERROR": "OFF"
+      }
+    },
+
+    {
+      "name": "vs2022-x64",
+      "displayName": "Visual Studio 2022 x64",
+      "description": "Visual Studio 2022 generator for x64",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolset": "host=x64"
+    },
+    {
+      "name": "vs2022-x64-static",
+      "displayName": "Visual Studio 2022 x64 Static",
+      "inherits": "vs2022-x64",
+      "cacheVariables": {
+        "DBASE_BUILD_SHARED": "OFF"
+      }
+    },
+    {
+      "name": "vs2022-x64-shared",
+      "displayName": "Visual Studio 2022 x64 Shared",
+      "inherits": "vs2022-x64",
+      "cacheVariables": {
+        "DBASE_BUILD_SHARED": "ON"
+      }
+    },
+
+    {
+      "name": "ninja-msvc-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl.exe",
+        "CMAKE_CXX_COMPILER": "cl.exe"
+      }
+    },
+    {
+      "name": "ninja-msvc-debug",
+      "displayName": "Ninja MSVC Debug",
+      "inherits": "ninja-msvc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ninja-msvc-release",
+      "displayName": "Ninja MSVC Release",
+      "inherits": "ninja-msvc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+
+    {
+      "name": "ninja-multi-msvc",
+      "displayName": "Ninja Multi-Config MSVC",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config"
+    },
+
+    {
+      "name": "ninja-clang-debug",
+      "displayName": "Ninja Clang Debug",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "ninja-clang-release",
+      "displayName": "Ninja Clang Release",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "ninja-gcc-debug",
+      "displayName": "Ninja GCC Debug",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "ninja-gcc-release",
+      "displayName": "Ninja GCC Release",
+      "inherits": "base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "vs2022-x64-debug",
+      "displayName": "Build VS2022 Debug",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-x64-release",
+      "displayName": "Build VS2022 Release",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2022-x64-static-debug",
+      "displayName": "Build VS2022 Static Debug",
+      "configurePreset": "vs2022-x64-static",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-x64-shared-release",
+      "displayName": "Build VS2022 Shared Release",
+      "configurePreset": "vs2022-x64-shared",
+      "configuration": "Release"
+    },
+
+    {
+      "name": "ninja-msvc-debug-build",
+      "displayName": "Build Ninja MSVC Debug",
+      "configurePreset": "ninja-msvc-debug"
+    },
+    {
+      "name": "ninja-msvc-release-build",
+      "displayName": "Build Ninja MSVC Release",
+      "configurePreset": "ninja-msvc-release"
+    },
+
+    {
+      "name": "ninja-multi-msvc-debug",
+      "displayName": "Build Ninja Multi-Config MSVC Debug",
+      "configurePreset": "ninja-multi-msvc",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-multi-msvc-release",
+      "displayName": "Build Ninja Multi-Config MSVC Release",
+      "configurePreset": "ninja-multi-msvc",
+      "configuration": "Release"
+    },
+
+    {
+      "name": "ninja-clang-debug-build",
+      "displayName": "Build Ninja Clang Debug",
+      "configurePreset": "ninja-clang-debug"
+    },
+    {
+      "name": "ninja-clang-release-build",
+      "displayName": "Build Ninja Clang Release",
+      "configurePreset": "ninja-clang-release"
+    },
+
+    {
+      "name": "ninja-gcc-debug-build",
+      "displayName": "Build Ninja GCC Debug",
+      "configurePreset": "ninja-gcc-debug"
+    },
+    {
+      "name": "ninja-gcc-release-build",
+      "displayName": "Build Ninja GCC Release",
+      "configurePreset": "ninja-gcc-release"
+    }
+  ],
+
+  "testPresets": [
+    {
+      "name": "vs2022-x64-debug-test",
+      "configurePreset": "vs2022-x64",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ninja-msvc-debug-test",
+      "configurePreset": "ninja-msvc-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ninja-clang-debug-test",
+      "configurePreset": "ninja-clang-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ninja-gcc-debug-test",
+      "configurePreset": "ninja-gcc-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
