@@ -4,6 +4,7 @@
 int main()
 {
     dbase::log::setDefaultLevel(dbase::log::Level::Trace);
+    dbase::log::setDefaultPatternStyle(dbase::log::PatternStyle::Threaded);
 
     std::thread t([]()
                   {
