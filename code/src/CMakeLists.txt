@@ -1,6 +1,6 @@
 file(GLOB_RECURSE DBASE_HEADERS CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/code/include/dbase/*.h"
-    "${CMAKE_SOURCE_DIR}/code/include/dbase/*.hpp"
+    "${PROJECT_SOURCE_DIR}/code/include/dbase/*.h"
+    "${PROJECT_SOURCE_DIR}/code/include/dbase/*.hpp"
 )
 
 file(GLOB_RECURSE DBASE_SOURCES CONFIGURE_DEPENDS
@@ -22,13 +22,13 @@ target_sources(dbase
         ${DBASE_SOURCES}
     PUBLIC
         FILE_SET HEADERS
-        BASE_DIRS "${CMAKE_SOURCE_DIR}/code/include"
+        BASE_DIRS "${PROJECT_SOURCE_DIR}/code/include"
         FILES ${DBASE_HEADERS}
 )
 
 target_include_directories(dbase
     PUBLIC
-        "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/code/include>"
+        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/code/include>"
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
@@ -39,10 +39,6 @@ target_compile_definitions(dbase
     PUBLIC
         $<$<PLATFORM_ID:Windows>:NOMINMAX>
         $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>
-        $<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS>
-        $<$<PLATFORM_ID:Windows>:_SCL_SECURE_NO_WARNINGS>
-        $<$<PLATFORM_ID:Windows>:UNICODE>
-        $<$<PLATFORM_ID:Windows>:_UNICODE>
         $<$<CONFIG:Debug>:DBASE_DEBUG>
 )
 

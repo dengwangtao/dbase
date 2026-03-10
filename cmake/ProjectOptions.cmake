@@ -1,3 +1,6 @@
+function(dbase_setup_global_options)
+endfunction()
+
 function(dbase_apply_options target_name)
     target_compile_features(${target_name} PUBLIC cxx_std_20)
 
@@ -39,7 +42,4 @@ function(dbase_apply_options target_name)
             )
         endif()
     endif()
-endfunction()
-
-function(dbase_setup_global_options)
 endfunction()
