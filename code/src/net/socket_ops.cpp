@@ -65,16 +65,6 @@ namespace
     return std::strerror(code);
 #endif
 }
-
-[[nodiscard]] sockaddr* sockaddrCast(sockaddr_in* addr) noexcept
-{
-    return reinterpret_cast<sockaddr*>(addr);
-}
-
-[[nodiscard]] const sockaddr* sockaddrCast(const sockaddr_in* addr) noexcept
-{
-    return reinterpret_cast<const sockaddr*>(addr);
-}
 }  // namespace
 
 dbase::Result<void> SocketOps::initialize()
@@ -97,10 +87,10 @@ void SocketOps::cleanup() noexcept
 #endif
 }
 
-SocketType SocketOps::createTcpNonblockingOrDie()
+SocketType SocketOps::createTcpNonblockingOrDie(DbaseAddressFamily family)
 {
 #if defined(_WIN32)
-    SocketType sock = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
+    SocketType sock = ::WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
     if (sock == kInvalidSocket)
     {
         throw std::runtime_error("createTcpNonblockingOrDie failed: " + lastErrorMessage());
@@ -114,7 +104,7 @@ SocketType SocketOps::createTcpNonblockingOrDie()
 
     return sock;
 #else
-    SocketType sock = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
+    SocketType sock = ::socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_TCP);
     if (sock == kInvalidSocket)
     {
         throw std::runtime_error("createTcpNonblockingOrDie failed: " + lastErrorMessage());
@@ -124,10 +114,10 @@ SocketType SocketOps::createTcpNonblockingOrDie()
 #endif
 }
 
-SocketType SocketOps::createUdpNonblockingOrDie()
+SocketType SocketOps::createUdpNonblockingOrDie(DbaseAddressFamily family)
 {
 #if defined(_WIN32)
-    SocketType sock = ::WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0, WSA_FLAG_OVERLAPPED);
+    SocketType sock = ::WSASocketW(family, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0, WSA_FLAG_OVERLAPPED);
     if (sock == kInvalidSocket)
     {
         throw std::runtime_error("createUdpNonblockingOrDie failed: " + lastErrorMessage());
@@ -141,7 +131,7 @@ SocketType SocketOps::createUdpNonblockingOrDie()
 
     return sock;
 #else
-    SocketType sock = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_UDP);
+    SocketType sock = ::socket(family, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_UDP);
     if (sock == kInvalidSocket)
     {
         throw std::runtime_error("createUdpNonblockingOrDie failed: " + lastErrorMessage());
@@ -176,7 +166,7 @@ void SocketOps::shutdownWrite(SocketType sock)
 
 dbase::Result<void> SocketOps::bind(SocketType sock, const InetAddress& addr)
 {
-    const int rc = ::bind(sock, sockaddrCast(&addr.getSockAddrInet()), static_cast<int>(sizeof(sockaddr_in)));
+    const int rc = ::bind(sock, addr.getSockAddr(), static_cast<int>(addr.length()));
     if (rc != 0)
     {
         return dbase::Result<void>(makeSystemError("bind failed: " + lastErrorMessage()));
@@ -198,15 +188,15 @@ dbase::Result<void> SocketOps::listen(SocketType sock, int backlog)
 
 dbase::Result<SocketType> SocketOps::accept(SocketType sock, InetAddress* peerAddr)
 {
-    sockaddr_in addr;
+    sockaddr_storage addr;
     std::memset(&addr, 0, sizeof(addr));
-    int len = static_cast<int>(sizeof(addr));
 
 #if defined(_WIN32)
-    SocketType conn = ::accept(sock, sockaddrCast(&addr), &len);
+    int len = static_cast<int>(sizeof(addr));
+    SocketType conn = ::accept(sock, reinterpret_cast<sockaddr*>(&addr), &len);
 #else
-    socklen_t sockLen = static_cast<socklen_t>(sizeof(addr));
-    SocketType conn = ::accept4(sock, sockaddrCast(&addr), &sockLen, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    socklen_t len = static_cast<socklen_t>(sizeof(addr));
+    SocketType conn = ::accept4(sock, reinterpret_cast<sockaddr*>(&addr), &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
 #endif
 
     if (conn == kInvalidSocket)
@@ -224,7 +214,7 @@ dbase::Result<SocketType> SocketOps::accept(SocketType sock, InetAddress* peerAd
 
     if (peerAddr != nullptr)
     {
-        peerAddr->setSockAddrInet(addr);
+        peerAddr->setSockAddr(reinterpret_cast<const sockaddr*>(&addr), static_cast<socklen_t>(len));
     }
 
     return dbase::Result<SocketType>(conn);
@@ -232,7 +222,7 @@ dbase::Result<SocketType> SocketOps::accept(SocketType sock, InetAddress* peerAd
 
 dbase::Result<void> SocketOps::connect(SocketType sock, const InetAddress& addr)
 {
-    const int rc = ::connect(sock, sockaddrCast(&addr.getSockAddrInet()), static_cast<int>(sizeof(sockaddr_in)));
+    const int rc = ::connect(sock, addr.getSockAddr(), static_cast<int>(addr.length()));
     if (rc != 0)
     {
         const int err = lastErrorCode();
@@ -271,7 +261,7 @@ int SocketOps::write(SocketType sock, const void* buf, std::size_t len)
 
 dbase::Result<InetAddress> SocketOps::localAddress(SocketType sock)
 {
-    sockaddr_in addr;
+    sockaddr_storage addr;
     std::memset(&addr, 0, sizeof(addr));
 
 #if defined(_WIN32)
@@ -280,17 +270,18 @@ dbase::Result<InetAddress> SocketOps::localAddress(SocketType sock)
     socklen_t len = static_cast<socklen_t>(sizeof(addr));
 #endif
 
-    if (::getsockname(sock, sockaddrCast(&addr), &len) != 0)
+    if (::getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) != 0)
     {
         return dbase::Result<InetAddress>(makeSystemError("getsockname failed: " + lastErrorMessage()));
     }
 
-    return dbase::Result<InetAddress>(InetAddress(addr));
+    return dbase::Result<InetAddress>(
+            InetAddress(reinterpret_cast<const sockaddr*>(&addr), static_cast<socklen_t>(len)));
 }
 
 dbase::Result<InetAddress> SocketOps::peerAddress(SocketType sock)
 {
-    sockaddr_in addr;
+    sockaddr_storage addr;
     std::memset(&addr, 0, sizeof(addr));
 
 #if defined(_WIN32)
@@ -299,12 +290,13 @@ dbase::Result<InetAddress> SocketOps::peerAddress(SocketType sock)
     socklen_t len = static_cast<socklen_t>(sizeof(addr));
 #endif
 
-    if (::getpeername(sock, sockaddrCast(&addr), &len) != 0)
+    if (::getpeername(sock, reinterpret_cast<sockaddr*>(&addr), &len) != 0)
     {
         return dbase::Result<InetAddress>(makeSystemError("getpeername failed: " + lastErrorMessage()));
     }
 
-    return dbase::Result<InetAddress>(InetAddress(addr));
+    return dbase::Result<InetAddress>(
+            InetAddress(reinterpret_cast<const sockaddr*>(&addr), static_cast<socklen_t>(len)));
 }
 
 dbase::Result<void> SocketOps::setReuseAddr(SocketType sock, bool on)
@@ -381,6 +373,17 @@ dbase::Result<void> SocketOps::setNonBlock(SocketType sock, bool on)
 
     return dbase::Result<void>();
 #endif
+}
+
+dbase::Result<void> SocketOps::setIpv6Only(SocketType sock, bool on)
+{
+    const int opt = on ? 1 : 0;
+    if (::setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&opt), sizeof(opt)) != 0)
+    {
+        return dbase::Result<void>(makeSystemError("setsockopt IPV6_V6ONLY failed: " + lastErrorMessage()));
+    }
+
+    return dbase::Result<void>();
 }
 
 int SocketOps::getSocketError(SocketType sock)

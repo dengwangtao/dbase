@@ -28,8 +28,8 @@ class SocketOps
         static dbase::Result<void> initialize();
         static void cleanup() noexcept;
 
-        [[nodiscard]] static SocketType createTcpNonblockingOrDie();
-        [[nodiscard]] static SocketType createUdpNonblockingOrDie();
+        [[nodiscard]] static SocketType createTcpNonblockingOrDie(DbaseAddressFamily family = AF_INET);
+        [[nodiscard]] static SocketType createUdpNonblockingOrDie(DbaseAddressFamily family = AF_INET);
 
         static void close(SocketType sock) noexcept;
         static void shutdownWrite(SocketType sock);
@@ -51,6 +51,7 @@ class SocketOps
         static dbase::Result<void> setTcpNoDelay(SocketType sock, bool on);
         static dbase::Result<void> setKeepAlive(SocketType sock, bool on);
         static dbase::Result<void> setNonBlock(SocketType sock, bool on);
+        static dbase::Result<void> setIpv6Only(SocketType sock, bool on);
 
         [[nodiscard]] static int getSocketError(SocketType sock);
         [[nodiscard]] static std::string lastErrorMessage();
