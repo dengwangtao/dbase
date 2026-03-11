@@ -7,6 +7,7 @@
 #include "dbase/net/length_field_codec.h"
 #include "dbase/net/socket.h"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -25,7 +26,15 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
             Disconnecting
         };
 
+        enum class OutputOverflowPolicy
+        {
+            Ignore,
+            CloseConnection,
+            ReportError
+        };
+
         static constexpr int kCodecError = -1001;
+        static constexpr int kOutputBufferOverflowError = -1002;
 
         using Ptr = std::shared_ptr<TcpConnection>;
         using ConnectionCallback = std::function<void(const Ptr&)>;
@@ -34,6 +43,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         using WriteCompleteCallback = std::function<void(const Ptr&)>;
         using CloseCallback = std::function<void(const Ptr&)>;
         using ErrorCallback = std::function<void(const Ptr&, int)>;
+        using HighWaterMarkCallback = std::function<void(const Ptr&, std::size_t)>;
 
         TcpConnection(
                 EventLoop* loop,
@@ -66,15 +76,22 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] const Buffer& inputBuffer() const noexcept;
         [[nodiscard]] const Buffer& outputBuffer() const noexcept;
 
+        [[nodiscard]] std::size_t maxOutputBufferBytes() const noexcept;
+        [[nodiscard]] OutputOverflowPolicy outputOverflowPolicy() const noexcept;
+
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
         void setWriteCompleteCallback(WriteCompleteCallback cb);
         void setCloseCallback(CloseCallback cb);
         void setErrorCallback(ErrorCallback cb);
+        void setHighWaterMarkCallback(HighWaterMarkCallback cb);
 
         void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
         [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
+
+        void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
+        void setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcept;
 
         void connectEstablished();
         void connectDestroyed();
@@ -97,6 +114,10 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void handleError();
         void handleCodecMessages();
 
+        [[nodiscard]] bool handleOutputBufferAppend(std::string_view data);
+        void notifyHighWaterMark(std::size_t bytes);
+        void handleOutputOverflow();
+
         void setState(State state) noexcept;
 
     private:
@@ -112,11 +133,15 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         std::shared_ptr<LengthFieldCodec> m_codec;
 
+        std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
+        OutputOverflowPolicy m_outputOverflowPolicy{OutputOverflowPolicy::CloseConnection};
+
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;
         FrameMessageCallback m_frameMessageCallback;
         WriteCompleteCallback m_writeCompleteCallback;
         CloseCallback m_closeCallback;
         ErrorCallback m_errorCallback;
+        HighWaterMarkCallback m_highWaterMarkCallback;
 };
 }  // namespace dbase::net

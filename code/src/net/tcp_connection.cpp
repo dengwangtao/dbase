@@ -134,6 +134,16 @@ const Buffer& TcpConnection::outputBuffer() const noexcept
     return m_outputBuffer;
 }
 
+std::size_t TcpConnection::maxOutputBufferBytes() const noexcept
+{
+    return m_maxOutputBufferBytes;
+}
+
+TcpConnection::OutputOverflowPolicy TcpConnection::outputOverflowPolicy() const noexcept
+{
+    return m_outputOverflowPolicy;
+}
+
 void TcpConnection::setConnectionCallback(ConnectionCallback cb)
 {
     m_connectionCallback = std::move(cb);
@@ -164,6 +174,11 @@ void TcpConnection::setErrorCallback(ErrorCallback cb)
     m_errorCallback = std::move(cb);
 }
 
+void TcpConnection::setHighWaterMarkCallback(HighWaterMarkCallback cb)
+{
+    m_highWaterMarkCallback = std::move(cb);
+}
+
 void TcpConnection::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
 {
     m_codec = std::move(codec);
@@ -172,6 +187,16 @@ void TcpConnection::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
 const std::shared_ptr<LengthFieldCodec>& TcpConnection::codec() const noexcept
 {
     return m_codec;
+}
+
+void TcpConnection::setMaxOutputBufferBytes(std::size_t bytes) noexcept
+{
+    m_maxOutputBufferBytes = bytes;
+}
+
+void TcpConnection::setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcept
+{
+    m_outputOverflowPolicy = policy;
 }
 
 void TcpConnection::connectEstablished()
@@ -216,12 +241,7 @@ void TcpConnection::connectDestroyed()
 
 void TcpConnection::send(std::string_view data)
 {
-    if (m_state == State::Disconnected)
-    {
-        return;
-    }
-
-    if (data.empty())
+    if (m_state == State::Disconnected || data.empty())
     {
         return;
     }
@@ -299,12 +319,7 @@ void TcpConnection::sendInLoop(std::string data)
 {
     m_loop->assertInLoopThread();
 
-    if (m_state == State::Disconnected)
-    {
-        return;
-    }
-
-    if (data.empty())
+    if (m_state == State::Disconnected || data.empty())
     {
         return;
     }
@@ -317,7 +332,11 @@ void TcpConnection::sendInLoop(std::string data)
             const auto written = static_cast<std::size_t>(n);
             if (written < data.size())
             {
-                m_outputBuffer.append(data.data() + written, data.size() - written);
+                const std::string_view remain(data.data() + written, data.size() - written);
+                if (!handleOutputBufferAppend(remain))
+                {
+                    return;
+                }
                 m_channel->enableWriting();
             }
             else if (m_writeCompleteCallback)
@@ -330,7 +349,10 @@ void TcpConnection::sendInLoop(std::string data)
         const int err = lastSocketErrorCode();
         if (isWouldBlockError(err))
         {
-            m_outputBuffer.append(data);
+            if (!handleOutputBufferAppend(data))
+            {
+                return;
+            }
             m_channel->enableWriting();
             return;
         }
@@ -339,7 +361,11 @@ void TcpConnection::sendInLoop(std::string data)
         return;
     }
 
-    m_outputBuffer.append(data);
+    if (!handleOutputBufferAppend(data))
+    {
+        return;
+    }
+
     if (!m_channel->isWriting())
     {
         m_channel->enableWriting();
@@ -511,6 +537,59 @@ void TcpConnection::handleCodecMessages()
         }
 
         m_frameMessageCallback(shared_from_this(), std::move(result.payload));
+    }
+}
+
+bool TcpConnection::handleOutputBufferAppend(std::string_view data)
+{
+    const std::size_t oldBytes = m_outputBuffer.readableBytes();
+    const std::size_t newBytes = oldBytes + data.size();
+
+    if (newBytes > m_maxOutputBufferBytes)
+    {
+        handleOutputOverflow();
+        return false;
+    }
+
+    m_outputBuffer.append(data);
+
+    if (m_highWaterMarkCallback && oldBytes < m_maxOutputBufferBytes && newBytes >= m_maxOutputBufferBytes)
+    {
+        notifyHighWaterMark(newBytes);
+    }
+
+    return true;
+}
+
+void TcpConnection::notifyHighWaterMark(std::size_t bytes)
+{
+    if (m_highWaterMarkCallback)
+    {
+        m_highWaterMarkCallback(shared_from_this(), bytes);
+    }
+}
+
+void TcpConnection::handleOutputOverflow()
+{
+    switch (m_outputOverflowPolicy)
+    {
+        case OutputOverflowPolicy::Ignore:
+            break;
+
+        case OutputOverflowPolicy::CloseConnection:
+            if (m_errorCallback)
+            {
+                m_errorCallback(shared_from_this(), kOutputBufferOverflowError);
+            }
+            handleClose();
+            break;
+
+        case OutputOverflowPolicy::ReportError:
+            if (m_errorCallback)
+            {
+                m_errorCallback(shared_from_this(), kOutputBufferOverflowError);
+            }
+            break;
     }
 }
 

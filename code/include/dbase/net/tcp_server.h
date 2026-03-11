@@ -20,6 +20,7 @@ class TcpServer
         using MessageCallback = TcpConnection::MessageCallback;
         using FrameMessageCallback = TcpConnection::FrameMessageCallback;
         using WriteCompleteCallback = TcpConnection::WriteCompleteCallback;
+        using HighWaterMarkCallback = TcpConnection::HighWaterMarkCallback;
         using ThreadInitCallback = EventLoop::Functor;
 
         TcpServer(
@@ -38,12 +39,16 @@ class TcpServer
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
         void setWriteCompleteCallback(WriteCompleteCallback cb);
+        void setHighWaterMarkCallback(HighWaterMarkCallback cb);
 
         void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
         [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
 
         void setThreadCount(std::size_t threadCount);
         void setThreadInitCallback(ThreadInitCallback cb);
+
+        void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
+        void setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy policy) noexcept;
 
         void start();
 
@@ -69,12 +74,15 @@ class TcpServer
         std::size_t m_threadCount{0};
 
         std::shared_ptr<LengthFieldCodec> m_codec;
+        std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
+        TcpConnection::OutputOverflowPolicy m_outputOverflowPolicy{TcpConnection::OutputOverflowPolicy::CloseConnection};
 
         ThreadInitCallback m_threadInitCallback;
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;
         FrameMessageCallback m_frameMessageCallback;
         WriteCompleteCallback m_writeCompleteCallback;
+        HighWaterMarkCallback m_highWaterMarkCallback;
 
         std::unordered_map<std::string, TcpConnection::Ptr> m_connections;
 };

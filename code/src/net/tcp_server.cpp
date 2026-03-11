@@ -49,6 +49,11 @@ void TcpServer::setWriteCompleteCallback(WriteCompleteCallback cb)
     m_writeCompleteCallback = std::move(cb);
 }
 
+void TcpServer::setHighWaterMarkCallback(HighWaterMarkCallback cb)
+{
+    m_highWaterMarkCallback = std::move(cb);
+}
+
 void TcpServer::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
 {
     if (m_started)
@@ -82,6 +87,16 @@ void TcpServer::setThreadInitCallback(ThreadInitCallback cb)
     }
 
     m_threadInitCallback = std::move(cb);
+}
+
+void TcpServer::setMaxOutputBufferBytes(std::size_t bytes) noexcept
+{
+    m_maxOutputBufferBytes = bytes;
+}
+
+void TcpServer::setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy policy) noexcept
+{
+    m_outputOverflowPolicy = policy;
 }
 
 void TcpServer::start()
@@ -170,7 +185,10 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
     conn->setMessageCallback(m_messageCallback);
     conn->setFrameMessageCallback(m_frameMessageCallback);
     conn->setWriteCompleteCallback(m_writeCompleteCallback);
+    conn->setHighWaterMarkCallback(m_highWaterMarkCallback);
     conn->setLengthFieldCodec(m_codec);
+    conn->setMaxOutputBufferBytes(m_maxOutputBufferBytes);
+    conn->setOutputOverflowPolicy(m_outputOverflowPolicy);
     conn->setCloseCallback([this](const TcpConnection::Ptr& c)
                            { removeConnection(c); });
 
