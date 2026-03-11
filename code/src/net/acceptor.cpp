@@ -1,5 +1,7 @@
 #include "dbase/net/acceptor.h"
 
+#include "dbase/net/socket_ops.h"
+
 #include <stdexcept>
 #include <utility>
 
@@ -7,7 +9,6 @@
 #include <WinSock2.h>
 #else
 #include <cerrno>
-#include <sys/socket.h>
 #endif
 
 namespace dbase::net
@@ -22,37 +23,59 @@ bool isWouldBlockError(int err) noexcept
     return err == EAGAIN || err == EWOULDBLOCK;
 #endif
 }
+
+bool isInterruptedError(int err) noexcept
+{
+#if defined(_WIN32)
+    return err == WSAEINTR;
+#else
+    return err == EINTR;
+#endif
+}
+
+bool isTransientAcceptError(int err) noexcept
+{
+#if defined(_WIN32)
+    return err == WSAECONNRESET || err == WSAECONNABORTED;
+#else
+    return err == ECONNABORTED || err == EPROTO || err == EPERM;
+#endif
+}
 }  // namespace
 
 Acceptor::Acceptor(const InetAddress& listenAddr, bool reusePort, bool ipv6Only)
-    : m_listenAddr(listenAddr),
-      m_acceptSocket(Socket::createTcp(listenAddr.addressFamily()))
+    : m_socket(SocketOps::createTcpNonblockingOrDie(listenAddr.addressFamily())),
+      m_listenAddr(listenAddr)
 {
-    m_acceptSocket.setReuseAddr(true);
+    auto reuseAddrRet = SocketOps::setReuseAddr(m_socket.fd(), true);
+    if (!reuseAddrRet)
+    {
+        throw std::runtime_error("Acceptor setReuseAddr failed: " + reuseAddrRet.error().message());
+    }
+
+    if (listenAddr.addressFamily() == AF_INET6)
+    {
+        auto ipv6OnlyRet = SocketOps::setIpv6Only(m_socket.fd(), ipv6Only);
+        if (!ipv6OnlyRet)
+        {
+            throw std::runtime_error("Acceptor setIpv6Only failed: " + ipv6OnlyRet.error().message());
+        }
+    }
 
     if (reusePort)
     {
-        try
+        auto reusePortRet = SocketOps::setReusePort(m_socket.fd(), true);
+        if (!reusePortRet)
         {
-            m_acceptSocket.setReusePort(true);
-        }
-        catch (...)
-        {
+            throw std::runtime_error("Acceptor setReusePort failed: " + reusePortRet.error().message());
         }
     }
 
-    if (listenAddr.isIpv6())
+    auto bindRet = SocketOps::bind(m_socket.fd(), m_listenAddr);
+    if (!bindRet)
     {
-        try
-        {
-            m_acceptSocket.setIpv6Only(ipv6Only);
-        }
-        catch (...)
-        {
-        }
+        throw std::runtime_error("Acceptor bind failed: " + bindRet.error().message());
     }
-
-    m_acceptSocket.bindAddress(m_listenAddr);
 }
 
 void Acceptor::setNewConnectionCallback(NewConnectionCallback cb)
@@ -60,14 +83,19 @@ void Acceptor::setNewConnectionCallback(NewConnectionCallback cb)
     m_newConnectionCallback = std::move(cb);
 }
 
-void Acceptor::listen(int backlog)
+void Acceptor::listen()
 {
     if (m_listening)
     {
-        throw std::logic_error("Acceptor already listening");
+        return;
     }
 
-    m_acceptSocket.listen(backlog);
+    auto listenRet = SocketOps::listen(m_socket.fd());
+    if (!listenRet)
+    {
+        throw std::runtime_error("Acceptor listen failed: " + listenRet.error().message());
+    }
+
     m_listening = true;
 }
 
@@ -81,99 +109,81 @@ const InetAddress& Acceptor::listenAddress() const noexcept
     return m_listenAddr;
 }
 
-const Socket& Acceptor::socket() const noexcept
+Socket& Acceptor::socket() noexcept
 {
-    return m_acceptSocket;
+    return m_socket;
 }
 
-std::optional<std::pair<Socket, InetAddress>> Acceptor::acceptOnce()
+const Socket& Acceptor::socket() const noexcept
+{
+    return m_socket;
+}
+
+void Acceptor::setEdgeTriggered(bool on) noexcept
+{
+#if defined(__linux__)
+    m_edgeTriggered = on;
+#else
+    m_edgeTriggered = false;
+    (void)on;
+#endif
+}
+
+bool Acceptor::edgeTriggered() const noexcept
+{
+    return m_edgeTriggered;
+}
+
+std::size_t Acceptor::acceptAvailable()
 {
     if (!m_listening)
     {
         throw std::logic_error("Acceptor is not listening");
     }
 
+    std::size_t acceptedCount = 0;
+
+    for (;;)
+    {
+        InetAddress peerAddr;
+        auto acceptRet = SocketOps::accept(m_socket.fd(), &peerAddr);
+        if (acceptRet)
+        {
+            ++acceptedCount;
+
+            if (m_newConnectionCallback)
+            {
+                m_newConnectionCallback(Socket(acceptRet.value()), peerAddr);
+            }
+            else
+            {
+                Socket orphan(acceptRet.value());
+            }
+
+            continue;
+        }
+
+        const int err =
 #if defined(_WIN32)
-    sockaddr_storage addr;
-    int len = static_cast<int>(sizeof(addr));
-    SocketType conn = ::accept(m_acceptSocket.fd(), reinterpret_cast<sockaddr*>(&addr), &len);
-    if (conn == kInvalidSocket)
-    {
-        const int err = ::WSAGetLastError();
-        if (isWouldBlockError(err))
-        {
-            return std::nullopt;
-        }
-
-        throw std::runtime_error(
-                "Acceptor::acceptOnce failed: " + SocketOps::lastErrorMessage());
-    }
-
-    auto nonblockRet = SocketOps::setNonBlock(conn, true);
-    if (!nonblockRet)
-    {
-        SocketOps::close(conn);
-        throw std::runtime_error(
-                "Acceptor::acceptOnce setNonBlock failed: " + nonblockRet.error().message());
-    }
-
-    InetAddress peerAddr(reinterpret_cast<const sockaddr*>(&addr), static_cast<socklen_t>(len));
+                ::WSAGetLastError();
 #else
-    sockaddr_storage addr;
-    socklen_t len = static_cast<socklen_t>(sizeof(addr));
-    SocketType conn = ::accept4(
-            m_acceptSocket.fd(),
-            reinterpret_cast<sockaddr*>(&addr),
-            &len,
-            SOCK_NONBLOCK | SOCK_CLOEXEC);
-
-    if (conn == kInvalidSocket)
-    {
-        const int err = errno;
-        if (isWouldBlockError(err))
-        {
-            return std::nullopt;
-        }
-
-        throw std::runtime_error(
-                "Acceptor::acceptOnce failed: " + SocketOps::lastErrorMessage());
-    }
-
-    InetAddress peerAddr(reinterpret_cast<const sockaddr*>(&addr), len);
+                errno;
 #endif
 
-    Socket socket(conn);
-
-    if (m_newConnectionCallback)
-    {
-        m_newConnectionCallback(Socket(socket.release()), peerAddr);
-        return std::nullopt;
-    }
-
-    return std::make_optional(std::make_pair(std::move(socket), peerAddr));
-}
-
-std::size_t Acceptor::acceptAvailable(std::size_t maxAcceptCount)
-{
-    std::size_t accepted = 0;
-
-    while (accepted < maxAcceptCount)
-    {
-        auto conn = acceptOnce();
-        if (!conn.has_value())
+        if (isWouldBlockError(err))
         {
             break;
         }
 
-        ++accepted;
-
-        if (m_newConnectionCallback)
+        if (isInterruptedError(err) || isTransientAcceptError(err))
         {
             continue;
         }
+
+        throw std::runtime_error("Acceptor accept failed: " + SocketOps::lastErrorMessage());
     }
 
-    return accepted;
+    return acceptedCount;
 }
 
 }  // namespace dbase::net

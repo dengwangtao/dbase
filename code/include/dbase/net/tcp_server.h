@@ -61,6 +61,9 @@ class TcpServer
         void enableEdgeTriggered(bool on) noexcept;
         [[nodiscard]] bool edgeTriggered() const noexcept;
 
+        void enableAcceptorEdgeTriggered(bool on) noexcept;
+        [[nodiscard]] bool acceptorEdgeTriggered() const noexcept;
+
         void setIdleTimeout(std::chrono::milliseconds timeout) noexcept;
         [[nodiscard]] std::chrono::milliseconds idleTimeout() const noexcept;
 
@@ -101,6 +104,7 @@ class TcpServer
         std::size_t m_readResumeLowWaterMark{0};
 
         bool m_edgeTriggered{false};
+        bool m_acceptorEdgeTriggered{false};
 
         std::chrono::milliseconds m_idleTimeout{0};
         std::chrono::milliseconds m_heartbeatInterval{0};

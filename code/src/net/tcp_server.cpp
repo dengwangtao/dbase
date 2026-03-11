@@ -160,6 +160,23 @@ bool TcpServer::edgeTriggered() const noexcept
     return m_edgeTriggered;
 }
 
+void TcpServer::enableAcceptorEdgeTriggered(bool on) noexcept
+{
+#if defined(__linux__)
+    m_acceptorEdgeTriggered = on;
+    m_acceptor.setEdgeTriggered(on);
+#else
+    m_acceptorEdgeTriggered = false;
+    m_acceptor.setEdgeTriggered(false);
+    (void)on;
+#endif
+}
+
+bool TcpServer::acceptorEdgeTriggered() const noexcept
+{
+    return m_acceptorEdgeTriggered;
+}
+
 void TcpServer::setIdleTimeout(std::chrono::milliseconds timeout) noexcept
 {
     m_idleTimeout = timeout;
@@ -209,9 +226,20 @@ void TcpServer::start()
 
     m_acceptor.listen();
 
+#if defined(__linux__)
+    m_acceptor.setEdgeTriggered(m_acceptorEdgeTriggered);
+#else
+    m_acceptor.setEdgeTriggered(false);
+#endif
+
     m_acceptChannel = std::make_unique<Channel>(m_loop, m_acceptor.socket().fd());
+#if defined(__linux__)
+    m_acceptChannel->setEdgeTriggered(m_acceptorEdgeTriggered);
+#else
+    m_acceptChannel->setEdgeTriggered(false);
+#endif
     m_acceptChannel->setReadCallback([this]()
-                                     { m_acceptor.acceptAvailable(64); });
+                                     { (void)m_acceptor.acceptAvailable(); });
     m_acceptChannel->enableReading();
 
     startIdleCheck();

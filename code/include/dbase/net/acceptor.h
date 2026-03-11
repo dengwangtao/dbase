@@ -3,8 +3,8 @@
 #include "dbase/net/inet_address.h"
 #include "dbase/net/socket.h"
 
+#include <cstddef>
 #include <functional>
-#include <optional>
 
 namespace dbase::net
 {
@@ -13,34 +13,32 @@ class Acceptor
     public:
         using NewConnectionCallback = std::function<void(Socket, const InetAddress&)>;
 
-        Acceptor(
-                const InetAddress& listenAddr,
-                bool reusePort = false,
-                bool ipv6Only = false);
+        Acceptor(const InetAddress& listenAddr, bool reusePort, bool ipv6Only);
 
         Acceptor(const Acceptor&) = delete;
         Acceptor& operator=(const Acceptor&) = delete;
-
-        Acceptor(Acceptor&&) = delete;
-        Acceptor& operator=(Acceptor&&) = delete;
 
         ~Acceptor() = default;
 
         void setNewConnectionCallback(NewConnectionCallback cb);
 
-        void listen(int backlog = SOMAXCONN);
+        void listen();
 
         [[nodiscard]] bool listening() const noexcept;
         [[nodiscard]] const InetAddress& listenAddress() const noexcept;
+        [[nodiscard]] Socket& socket() noexcept;
         [[nodiscard]] const Socket& socket() const noexcept;
 
-        [[nodiscard]] std::optional<std::pair<Socket, InetAddress>> acceptOnce();
-        std::size_t acceptAvailable(std::size_t maxAcceptCount = 64);
+        void setEdgeTriggered(bool on) noexcept;
+        [[nodiscard]] bool edgeTriggered() const noexcept;
+
+        std::size_t acceptAvailable();
 
     private:
+        Socket m_socket;
         InetAddress m_listenAddr;
-        Socket m_acceptSocket;
         bool m_listening{false};
+        bool m_edgeTriggered{false};
         NewConnectionCallback m_newConnectionCallback;
 };
 }  // namespace dbase::net
