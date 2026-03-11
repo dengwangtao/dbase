@@ -78,7 +78,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void forceClose();
 
     private:
-        void sendInLoop(std::string_view data);
+        void sendInLoop(std::string data);
         void shutdownInLoop();
         void forceCloseInLoop();
 
@@ -86,6 +86,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void handleWrite();
         void handleClose();
         void handleError();
+
+        void setState(State state) noexcept;
 
     private:
         EventLoop* m_loop{nullptr};

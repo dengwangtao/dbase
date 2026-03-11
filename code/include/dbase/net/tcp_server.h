@@ -4,6 +4,7 @@
 #include "dbase/net/event_loop.h"
 #include "dbase/net/tcp_connection.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>

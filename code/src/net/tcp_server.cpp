@@ -109,20 +109,20 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
 
 void TcpServer::removeConnection(const TcpConnection::Ptr& conn)
 {
-    if (!m_loop->isInLoopThread())
-    {
-        throw std::runtime_error("TcpServer::removeConnection cross-thread is not supported yet");
-    }
-
-    removeConnectionInLoop(conn);
+    auto selfConn = conn;
+    m_loop->queueInLoop([this, selfConn]()
+                        { removeConnectionInLoop(selfConn); });
 }
 
 void TcpServer::removeConnectionInLoop(const TcpConnection::Ptr& conn)
 {
     m_loop->assertInLoopThread();
 
-    m_connections.erase(conn->name());
-    conn->connectDestroyed();
+    const auto erased = m_connections.erase(conn->name());
+    if (erased > 0)
+    {
+        conn->connectDestroyed();
+    }
 }
 
 }  // namespace dbase::net

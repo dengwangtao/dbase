@@ -3,6 +3,8 @@
 #include "dbase/net/event_loop.h"
 #include "dbase/net/socket_ops.h"
 #include "dbase/net/tcp_server.h"
+#include "dbase/thread/current_thread.h"
+#include "dbase/thread/thread.h"
 
 int main()
 {
@@ -26,11 +28,6 @@ int main()
         server.setConnectionCallback(
                 [](const dbase::net::TcpConnection::Ptr& conn)
                 {
-                    if (conn->disconnected())
-                    {
-                        DBASE_LOG_INFO("connection {} disconnected", conn->name());
-                        return;
-                    }
                     DBASE_LOG_INFO(
                             "connection {} state={} peer={}",
                             conn->name(),
@@ -55,7 +52,17 @@ int main()
         server.start();
         DBASE_LOG_INFO("tcp server listen on {}", listenAddr.toIpPort());
 
+        dbase::thread::Thread quitter(
+                [&loop](std::stop_token)
+                {
+                    dbase::thread::current_thread::sleepForMs(30000);
+                    loop.quit();
+                },
+                "server-quitter");
+
+        quitter.start();
         loop.loop();
+        quitter.join();
     }
     catch (const std::exception& ex)
     {

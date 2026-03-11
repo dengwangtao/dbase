@@ -3,6 +3,7 @@
 #include "dbase/net/socket_ops.h"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -167,14 +168,14 @@ void TcpConnection::setErrorCallback(ErrorCallback cb)
 
 void TcpConnection::connectEstablished()
 {
+    m_loop->assertInLoopThread();
+
     if (m_state != State::Connecting)
     {
         throw std::logic_error("TcpConnection::connectEstablished invalid state");
     }
 
-    m_loop->assertInLoopThread();
-
-    m_state = State::Connected;
+    setState(State::Connected);
     m_channel->enableReading();
 
     if (m_connectionCallback)
@@ -187,9 +188,9 @@ void TcpConnection::connectDestroyed()
 {
     m_loop->assertInLoopThread();
 
-    if (m_state == State::Connected)
+    if (m_state == State::Connected || m_state == State::Disconnecting)
     {
-        m_state = State::Disconnected;
+        setState(State::Disconnected);
         m_channel->disableAll();
 
         if (m_connectionCallback)
@@ -211,14 +212,21 @@ void TcpConnection::send(std::string_view data)
         return;
     }
 
+    if (data.empty())
+    {
+        return;
+    }
+
     if (m_loop->isInLoopThread())
     {
-        sendInLoop(data);
+        sendInLoop(std::string(data));
+        return;
     }
-    else
-    {
-        throw std::runtime_error("TcpConnection::send cross-thread is not supported yet");
-    }
+
+    auto self = shared_from_this();
+    std::string copied(data);
+    m_loop->queueInLoop([self, copied = std::move(copied)]() mutable
+                        { self->sendInLoop(std::move(copied)); });
 }
 
 void TcpConnection::send(Buffer& buffer)
@@ -229,37 +237,43 @@ void TcpConnection::send(Buffer& buffer)
 
 void TcpConnection::shutdown()
 {
-    if (m_state == State::Connected)
+    if (m_state != State::Connected)
     {
-        m_state = State::Disconnecting;
-
-        if (m_loop->isInLoopThread())
-        {
-            shutdownInLoop();
-        }
-        else
-        {
-            throw std::runtime_error("TcpConnection::shutdown cross-thread is not supported yet");
-        }
+        return;
     }
+
+    setState(State::Disconnecting);
+
+    auto self = shared_from_this();
+    if (m_loop->isInLoopThread())
+    {
+        shutdownInLoop();
+        return;
+    }
+
+    m_loop->queueInLoop([self]()
+                        { self->shutdownInLoop(); });
 }
 
 void TcpConnection::forceClose()
 {
-    if (m_state == State::Connected || m_state == State::Disconnecting)
+    if (m_state == State::Disconnected)
     {
-        if (m_loop->isInLoopThread())
-        {
-            forceCloseInLoop();
-        }
-        else
-        {
-            throw std::runtime_error("TcpConnection::forceClose cross-thread is not supported yet");
-        }
+        return;
     }
+
+    auto self = shared_from_this();
+    if (m_loop->isInLoopThread())
+    {
+        forceCloseInLoop();
+        return;
+    }
+
+    m_loop->queueInLoop([self]()
+                        { self->forceCloseInLoop(); });
 }
 
-void TcpConnection::sendInLoop(std::string_view data)
+void TcpConnection::sendInLoop(std::string data)
 {
     m_loop->assertInLoopThread();
 
@@ -323,6 +337,12 @@ void TcpConnection::shutdownInLoop()
 void TcpConnection::forceCloseInLoop()
 {
     m_loop->assertInLoopThread();
+
+    if (m_state == State::Disconnected)
+    {
+        return;
+    }
+
     handleClose();
 }
 
@@ -431,7 +451,7 @@ void TcpConnection::handleClose()
         return;
     }
 
-    m_state = State::Disconnected;
+    setState(State::Disconnected);
     m_channel->disableAll();
 
     auto self = shared_from_this();
@@ -456,6 +476,11 @@ void TcpConnection::handleError()
     {
         m_errorCallback(shared_from_this(), err);
     }
+}
+
+void TcpConnection::setState(State state) noexcept
+{
+    m_state = state;
 }
 
 }  // namespace dbase::net
