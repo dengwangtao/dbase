@@ -98,7 +98,7 @@ int main()
         dbase::thread::Thread quitter(
                 [&loop](std::stop_token)
                 {
-                    dbase::thread::current_thread::sleepForMs(60000);
+                    dbase::thread::current_thread::sleepForMs(6000000);
                     loop.quit();
                 },
                 "server-quitter");

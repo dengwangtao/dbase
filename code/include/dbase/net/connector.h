@@ -31,6 +31,11 @@ class Connector : public std::enable_shared_from_this<Connector>
 
         void setNewConnectionCallback(NewConnectionCallback cb);
 
+        void setRetryDelayMs(int initialDelayMs, int maxDelayMs) noexcept;
+        [[nodiscard]] int initialRetryDelayMs() const noexcept;
+        [[nodiscard]] int maxRetryDelayMs() const noexcept;
+        [[nodiscard]] int currentRetryDelayMs() const noexcept;
+
         void start();
         void stop();
         void restart();
@@ -64,7 +69,11 @@ class Connector : public std::enable_shared_from_this<Connector>
         State m_state{State::Disconnected};
         std::unique_ptr<Channel> m_channel;
         SocketType m_socket{kInvalidSocket};
+
+        int m_initialRetryDelayMs{500};
+        int m_maxRetryDelayMs{30000};
         int m_retryDelayMs{500};
+
         NewConnectionCallback m_newConnectionCallback;
         EventLoop::TimerId m_retryTimerId{0};
 };

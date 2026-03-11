@@ -27,6 +27,7 @@ enum class PatternStyle
 {
     Compact,
     Source,
+    SourceFunction,
     Threaded
 };
 
@@ -56,6 +57,7 @@ class Formatter
     private:
         [[nodiscard]] std::string formatCompact(const LogEvent& event) const;
         [[nodiscard]] std::string formatSource(const LogEvent& event) const;
+        [[nodiscard]] std::string formatSourceFunction(const LogEvent& event) const;
         [[nodiscard]] std::string formatThreaded(const LogEvent& event) const;
 
     private:

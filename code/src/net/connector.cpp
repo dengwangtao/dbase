@@ -88,6 +88,38 @@ void Connector::setNewConnectionCallback(NewConnectionCallback cb)
     m_newConnectionCallback = std::move(cb);
 }
 
+void Connector::setRetryDelayMs(int initialDelayMs, int maxDelayMs) noexcept
+{
+    if (initialDelayMs <= 0)
+    {
+        initialDelayMs = 1;
+    }
+
+    if (maxDelayMs < initialDelayMs)
+    {
+        maxDelayMs = initialDelayMs;
+    }
+
+    m_initialRetryDelayMs = initialDelayMs;
+    m_maxRetryDelayMs = maxDelayMs;
+    m_retryDelayMs = initialDelayMs;
+}
+
+int Connector::initialRetryDelayMs() const noexcept
+{
+    return m_initialRetryDelayMs;
+}
+
+int Connector::maxRetryDelayMs() const noexcept
+{
+    return m_maxRetryDelayMs;
+}
+
+int Connector::currentRetryDelayMs() const noexcept
+{
+    return m_retryDelayMs;
+}
+
 void Connector::start()
 {
     m_started = true;
@@ -109,7 +141,7 @@ void Connector::stop()
 void Connector::restart()
 {
     cancelRetry();
-    m_retryDelayMs = 500;
+    m_retryDelayMs = m_initialRetryDelayMs;
     m_started = true;
 
     auto self = shared_from_this();
@@ -253,6 +285,7 @@ void Connector::handleWrite()
     }
 
     setState(State::Connected);
+    m_retryDelayMs = m_initialRetryDelayMs;
 
     if (m_started && m_newConnectionCallback)
     {
@@ -301,12 +334,12 @@ void Connector::retry()
     m_retryTimerId = m_loop->runAfter(delay, [self]()
                                       { self->startInLoop(); });
 
-    if (m_retryDelayMs < 30000)
+    if (m_retryDelayMs < m_maxRetryDelayMs)
     {
         m_retryDelayMs *= 2;
-        if (m_retryDelayMs > 30000)
+        if (m_retryDelayMs > m_maxRetryDelayMs)
         {
-            m_retryDelayMs = 30000;
+            m_retryDelayMs = m_maxRetryDelayMs;
         }
     }
 }

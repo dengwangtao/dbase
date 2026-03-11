@@ -1,5 +1,6 @@
 #include "dbase/net/tcp_client.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -22,6 +23,8 @@ TcpClient::TcpClient(EventLoop* loop, const InetAddress& serverAddr, std::string
 
 TcpClient::~TcpClient()
 {
+    stopKeepAliveCheck();
+
     TcpConnection::Ptr conn;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -58,6 +61,16 @@ void TcpClient::setWriteCompleteCallback(WriteCompleteCallback cb)
     m_writeCompleteCallback = std::move(cb);
 }
 
+void TcpClient::setHeartbeatCallback(HeartbeatCallback cb)
+{
+    m_heartbeatCallback = std::move(cb);
+}
+
+void TcpClient::setIdleCallback(IdleCallback cb)
+{
+    m_idleCallback = std::move(cb);
+}
+
 void TcpClient::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
 {
     m_codec = std::move(codec);
@@ -68,13 +81,44 @@ const std::shared_ptr<LengthFieldCodec>& TcpClient::codec() const noexcept
     return m_codec;
 }
 
+void TcpClient::setHeartbeatInterval(std::chrono::milliseconds interval) noexcept
+{
+    m_heartbeatInterval = interval;
+}
+
+std::chrono::milliseconds TcpClient::heartbeatInterval() const noexcept
+{
+    return m_heartbeatInterval;
+}
+
+void TcpClient::setIdleTimeout(std::chrono::milliseconds timeout) noexcept
+{
+    m_idleTimeout = timeout;
+}
+
+std::chrono::milliseconds TcpClient::idleTimeout() const noexcept
+{
+    return m_idleTimeout;
+}
+
 void TcpClient::enableRetry(bool on) noexcept
 {
     m_retry = on;
 }
 
+bool TcpClient::retryEnabled() const noexcept
+{
+    return m_retry;
+}
+
+void TcpClient::setRetryDelayMs(int initialDelayMs, int maxDelayMs) noexcept
+{
+    m_connector->setRetryDelayMs(initialDelayMs, maxDelayMs);
+}
+
 void TcpClient::connect()
 {
+    startKeepAliveCheck();
     m_connector->start();
 }
 
@@ -94,6 +138,7 @@ void TcpClient::disconnect()
 
 void TcpClient::stop()
 {
+    stopKeepAliveCheck();
     m_connector->stop();
 }
 
@@ -110,11 +155,6 @@ const std::string& TcpClient::name() const noexcept
 const InetAddress& TcpClient::serverAddress() const noexcept
 {
     return m_serverAddr;
-}
-
-bool TcpClient::retryEnabled() const noexcept
-{
-    return m_retry;
 }
 
 TcpConnection::Ptr TcpClient::connection() const
@@ -169,6 +209,93 @@ void TcpClient::removeConnection(const TcpConnection::Ptr& conn)
     if (m_retry)
     {
         m_connector->restart();
+    }
+}
+
+void TcpClient::startKeepAliveCheck()
+{
+    if (m_keepAliveTimerId != 0)
+    {
+        return;
+    }
+
+    const auto baseInterval = [&]() -> std::chrono::milliseconds
+    {
+        if (m_idleTimeout.count() > 0 && m_heartbeatInterval.count() > 0)
+        {
+            return std::min(std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2), m_heartbeatInterval);
+        }
+
+        if (m_idleTimeout.count() > 0)
+        {
+            return std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2);
+        }
+
+        if (m_heartbeatInterval.count() > 0)
+        {
+            return m_heartbeatInterval;
+        }
+
+        return std::chrono::milliseconds(0);
+    }();
+
+    if (baseInterval.count() <= 0)
+    {
+        return;
+    }
+
+    m_keepAliveTimerId = m_loop->runEvery(baseInterval, [this]()
+                                          { checkKeepAlive(); });
+}
+
+void TcpClient::stopKeepAliveCheck()
+{
+    if (m_keepAliveTimerId != 0)
+    {
+        m_loop->cancelTimer(m_keepAliveTimerId);
+        m_keepAliveTimerId = 0;
+    }
+}
+
+void TcpClient::checkKeepAlive()
+{
+    TcpConnection::Ptr conn;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        conn = m_connection;
+    }
+
+    if (!conn || !conn->connected())
+    {
+        return;
+    }
+
+    const auto idle = conn->idleFor();
+
+    if (m_idleTimeout.count() > 0 && idle >= m_idleTimeout)
+    {
+        if (m_idleCallback)
+        {
+            m_idleCallback(conn);
+        }
+        else
+        {
+            conn->forceClose();
+        }
+        return;
+    }
+
+    if (m_heartbeatInterval.count() > 0 && m_heartbeatCallback)
+    {
+        const auto lastProbe = conn->lastProbeAt();
+        const bool neverProbed = (lastProbe == TcpConnection::TimePoint{});
+        const bool probeExpired = !neverProbed && conn->probeIdleFor() >= m_heartbeatInterval;
+
+        if (idle >= m_heartbeatInterval && (neverProbed || probeExpired))
+        {
+            conn->markKeepAliveProbeSent();
+            m_heartbeatCallback(conn);
+        }
     }
 }
 

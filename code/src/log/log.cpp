@@ -90,6 +90,8 @@ std::string Formatter::format(const LogEvent& event) const
             return formatCompact(event);
         case PatternStyle::Source:
             return formatSource(event);
+        case PatternStyle::SourceFunction:
+            return formatSourceFunction(event);
         case PatternStyle::Threaded:
             return formatThreaded(event);
         default:
@@ -109,7 +111,18 @@ std::string Formatter::formatCompact(const LogEvent& event) const
 std::string Formatter::formatSource(const LogEvent& event) const
 {
     return std::format(
-            "[{}] [{}] [{}:{}] [{}] {}",
+            "[{}] [{}] [{}:{}] {}",
+            formatTimestampUs(event.timestampUs),
+            toSpdlogString(event.level),
+            event.file,
+            event.line,
+            event.message);
+}
+
+std::string Formatter::formatSourceFunction(const LogEvent& event) const
+{
+    return std::format(
+            "[{}] [{}] [{}:{}] {}",
             formatTimestampUs(event.timestampUs),
             toSpdlogString(event.level),
             event.file,
