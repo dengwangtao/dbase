@@ -48,9 +48,24 @@ void TcpClient::setMessageCallback(MessageCallback cb)
     m_messageCallback = std::move(cb);
 }
 
+void TcpClient::setFrameMessageCallback(FrameMessageCallback cb)
+{
+    m_frameMessageCallback = std::move(cb);
+}
+
 void TcpClient::setWriteCompleteCallback(WriteCompleteCallback cb)
 {
     m_writeCompleteCallback = std::move(cb);
+}
+
+void TcpClient::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
+{
+    m_codec = std::move(codec);
+}
+
+const std::shared_ptr<LengthFieldCodec>& TcpClient::codec() const noexcept
+{
+    return m_codec;
 }
 
 void TcpClient::enableRetry(bool on) noexcept
@@ -125,7 +140,9 @@ void TcpClient::newConnection(Socket socket)
 
     conn->setConnectionCallback(m_connectionCallback);
     conn->setMessageCallback(m_messageCallback);
+    conn->setFrameMessageCallback(m_frameMessageCallback);
     conn->setWriteCompleteCallback(m_writeCompleteCallback);
+    conn->setLengthFieldCodec(m_codec);
     conn->setCloseCallback([this](const TcpConnection::Ptr& c)
                            { removeConnection(c); });
 

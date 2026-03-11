@@ -3,6 +3,7 @@
 #include "dbase/net/acceptor.h"
 #include "dbase/net/event_loop.h"
 #include "dbase/net/event_loop_thread_pool.h"
+#include "dbase/net/length_field_codec.h"
 #include "dbase/net/tcp_connection.h"
 
 #include <cstdint>
@@ -17,6 +18,7 @@ class TcpServer
     public:
         using ConnectionCallback = TcpConnection::ConnectionCallback;
         using MessageCallback = TcpConnection::MessageCallback;
+        using FrameMessageCallback = TcpConnection::FrameMessageCallback;
         using WriteCompleteCallback = TcpConnection::WriteCompleteCallback;
         using ThreadInitCallback = EventLoop::Functor;
 
@@ -34,7 +36,11 @@ class TcpServer
 
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
+        void setFrameMessageCallback(FrameMessageCallback cb);
         void setWriteCompleteCallback(WriteCompleteCallback cb);
+
+        void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
+        [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
 
         void setThreadCount(std::size_t threadCount);
         void setThreadInitCallback(ThreadInitCallback cb);
@@ -62,9 +68,12 @@ class TcpServer
         std::int64_t m_nextConnId{1};
         std::size_t m_threadCount{0};
 
+        std::shared_ptr<LengthFieldCodec> m_codec;
+
         ThreadInitCallback m_threadInitCallback;
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;
+        FrameMessageCallback m_frameMessageCallback;
         WriteCompleteCallback m_writeCompleteCallback;
 
         std::unordered_map<std::string, TcpConnection::Ptr> m_connections;

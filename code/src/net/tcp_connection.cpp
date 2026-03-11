@@ -145,6 +145,11 @@ void TcpConnection::setMessageCallback(MessageCallback cb)
     m_messageCallback = std::move(cb);
 }
 
+void TcpConnection::setFrameMessageCallback(FrameMessageCallback cb)
+{
+    m_frameMessageCallback = std::move(cb);
+}
+
 void TcpConnection::setWriteCompleteCallback(WriteCompleteCallback cb)
 {
     m_writeCompleteCallback = std::move(cb);
@@ -158,6 +163,16 @@ void TcpConnection::setCloseCallback(CloseCallback cb)
 void TcpConnection::setErrorCallback(ErrorCallback cb)
 {
     m_errorCallback = std::move(cb);
+}
+
+void TcpConnection::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
+{
+    m_codec = std::move(codec);
+}
+
+const std::shared_ptr<LengthFieldCodec>& TcpConnection::codec() const noexcept
+{
+    return m_codec;
 }
 
 void TcpConnection::connectEstablished()
@@ -227,6 +242,19 @@ void TcpConnection::send(Buffer& buffer)
 {
     send(buffer.readableView());
     buffer.retrieveAll();
+}
+
+void TcpConnection::sendFrame(std::string_view payload)
+{
+    if (!m_codec)
+    {
+        send(payload);
+        return;
+    }
+
+    Buffer frame;
+    m_codec->encode(payload, frame);
+    send(frame);
 }
 
 void TcpConnection::shutdown()
@@ -350,10 +378,16 @@ void TcpConnection::handleRead()
     if (n > 0)
     {
         m_inputBuffer.append(buf.data(), static_cast<std::size_t>(n));
-        if (m_messageCallback)
+
+        if (m_codec && m_frameMessageCallback)
+        {
+            handleCodecMessages();
+        }
+        else if (m_messageCallback)
         {
             m_messageCallback(shared_from_this(), m_inputBuffer);
         }
+
         return;
     }
 
@@ -469,6 +503,32 @@ void TcpConnection::handleError()
     if (m_errorCallback)
     {
         m_errorCallback(shared_from_this(), err);
+    }
+}
+
+void TcpConnection::handleCodecMessages()
+{
+    for (;;)
+    {
+        auto result = m_codec->tryDecode(m_inputBuffer);
+
+        if (result.status == LengthFieldCodec::DecodeStatus::NeedMoreData)
+        {
+            break;
+        }
+
+        if (result.status != LengthFieldCodec::DecodeStatus::Ok)
+        {
+            if (m_errorCallback)
+            {
+                m_errorCallback(shared_from_this(), kCodecError);
+            }
+
+            handleClose();
+            break;
+        }
+
+        m_frameMessageCallback(shared_from_this(), std::move(result.payload));
     }
 }
 

@@ -4,6 +4,7 @@
 #include "dbase/net/channel.h"
 #include "dbase/net/event_loop.h"
 #include "dbase/net/inet_address.h"
+#include "dbase/net/length_field_codec.h"
 #include "dbase/net/socket.h"
 
 #include <functional>
@@ -24,9 +25,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
             Disconnecting
         };
 
+        static constexpr int kCodecError = -1001;
+
         using Ptr = std::shared_ptr<TcpConnection>;
         using ConnectionCallback = std::function<void(const Ptr&)>;
         using MessageCallback = std::function<void(const Ptr&, Buffer&)>;
+        using FrameMessageCallback = std::function<void(const Ptr&, std::string&&)>;
         using WriteCompleteCallback = std::function<void(const Ptr&)>;
         using CloseCallback = std::function<void(const Ptr&)>;
         using ErrorCallback = std::function<void(const Ptr&, int)>;
@@ -64,15 +68,20 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
+        void setFrameMessageCallback(FrameMessageCallback cb);
         void setWriteCompleteCallback(WriteCompleteCallback cb);
         void setCloseCallback(CloseCallback cb);
         void setErrorCallback(ErrorCallback cb);
+
+        void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
+        [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
 
         void connectEstablished();
         void connectDestroyed();
 
         void send(std::string_view data);
         void send(Buffer& buffer);
+        void sendFrame(std::string_view payload);
 
         void shutdown();
         void forceClose();
@@ -86,6 +95,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void handleWrite();
         void handleClose();
         void handleError();
+        void handleCodecMessages();
 
         void setState(State state) noexcept;
 
@@ -100,8 +110,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         Buffer m_inputBuffer;
         Buffer m_outputBuffer;
 
+        std::shared_ptr<LengthFieldCodec> m_codec;
+
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;
+        FrameMessageCallback m_frameMessageCallback;
         WriteCompleteCallback m_writeCompleteCallback;
         CloseCallback m_closeCallback;
         ErrorCallback m_errorCallback;

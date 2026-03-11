@@ -2,6 +2,7 @@
 
 #include "dbase/net/socket_ops.h"
 
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -45,16 +46,26 @@ int lastSocketErrorCode() noexcept
 
 Connector::Connector(EventLoop* loop, const InetAddress& serverAddr)
     : m_loop(loop),
-      m_serverAddr(serverAddr)
+      m_serverAddr(serverAddr),
+      m_retryTimer(std::make_unique<dbase::thread::TimerQueue>(nullptr, "connector-retry"))
 {
     if (m_loop == nullptr)
     {
         throw std::invalid_argument("Connector loop is null");
     }
+
+    m_retryTimer->start();
 }
 
 Connector::~Connector()
 {
+    cancelRetry();
+
+    if (m_retryTimer)
+    {
+        m_retryTimer->stop();
+    }
+
     if (m_channel)
     {
         m_channel.reset();
@@ -86,6 +97,8 @@ void Connector::start()
 void Connector::stop()
 {
     m_started = false;
+    cancelRetry();
+
     auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         { self->stopInLoop(); });
@@ -93,11 +106,15 @@ void Connector::stop()
 
 void Connector::restart()
 {
-    m_loop->assertInLoopThread();
-    setState(State::Disconnected);
+    cancelRetry();
     m_retryDelayMs = 500;
     m_started = true;
-    startInLoop();
+
+    auto self = shared_from_this();
+    m_loop->queueInLoop([self]()
+                        {
+        self->setState(State::Disconnected);
+        self->startInLoop(); });
 }
 
 EventLoop* Connector::ownerLoop() const noexcept
@@ -142,7 +159,7 @@ void Connector::stopInLoop()
 
     if (m_state == State::Connecting)
     {
-        const int sock = removeAndResetChannelRaw();
+        const SocketType sock = removeAndResetChannelRaw();
         setState(State::Disconnected);
         if (sock != kInvalidSocket)
         {
@@ -160,7 +177,7 @@ void Connector::connect()
     if (ret)
     {
         const int err = SocketOps::getSocketError(sock);
-        if (err == 0)
+        if (err == 0 || isInProgressError(err))
         {
             connecting(Socket(sock));
             return;
@@ -216,7 +233,7 @@ void Connector::handleWrite()
         return;
     }
 
-    const int sock = removeAndResetChannelRaw();
+    const SocketType sock = removeAndResetChannelRaw();
     const int err = SocketOps::getSocketError(sock);
 
     if (err != 0)
@@ -254,8 +271,12 @@ void Connector::handleError()
         return;
     }
 
-    const int sock = removeAndResetChannelRaw();
-    SocketOps::close(sock);
+    const SocketType sock = removeAndResetChannelRaw();
+    if (sock != kInvalidSocket)
+    {
+        SocketOps::close(sock);
+    }
+
     retry();
 }
 
@@ -270,9 +291,14 @@ void Connector::retry()
         return;
     }
 
+    cancelRetry();
+
     auto self = shared_from_this();
-    m_loop->queueInLoop([self]()
-                        { self->startInLoop(); });
+    const auto delay = std::chrono::milliseconds(m_retryDelayMs);
+
+    m_retryTimerId = m_retryTimer->runAfter(delay, [self]()
+                                            { self->m_loop->queueInLoop([self]()
+                                                                        { self->startInLoop(); }); });
 
     if (m_retryDelayMs < 30000)
     {
@@ -284,17 +310,26 @@ void Connector::retry()
     }
 }
 
+void Connector::cancelRetry()
+{
+    if (m_retryTimer && m_retryTimerId != 0)
+    {
+        m_retryTimer->cancel(m_retryTimerId);
+        m_retryTimerId = 0;
+    }
+}
+
 void Connector::removeAndResetChannel()
 {
     m_loop->assertInLoopThread();
     (void)removeAndResetChannelRaw();
 }
 
-int Connector::removeAndResetChannelRaw()
+SocketType Connector::removeAndResetChannelRaw()
 {
     m_loop->assertInLoopThread();
 
-    int sock = m_socket;
+    SocketType sock = m_socket;
 
     if (m_channel)
     {

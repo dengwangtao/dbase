@@ -39,9 +39,29 @@ void TcpServer::setMessageCallback(MessageCallback cb)
     m_messageCallback = std::move(cb);
 }
 
+void TcpServer::setFrameMessageCallback(FrameMessageCallback cb)
+{
+    m_frameMessageCallback = std::move(cb);
+}
+
 void TcpServer::setWriteCompleteCallback(WriteCompleteCallback cb)
 {
     m_writeCompleteCallback = std::move(cb);
+}
+
+void TcpServer::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
+{
+    if (m_started)
+    {
+        throw std::logic_error("TcpServer::setLengthFieldCodec after start");
+    }
+
+    m_codec = std::move(codec);
+}
+
+const std::shared_ptr<LengthFieldCodec>& TcpServer::codec() const noexcept
+{
+    return m_codec;
 }
 
 void TcpServer::setThreadCount(std::size_t threadCount)
@@ -148,7 +168,9 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
 
     conn->setConnectionCallback(m_connectionCallback);
     conn->setMessageCallback(m_messageCallback);
+    conn->setFrameMessageCallback(m_frameMessageCallback);
     conn->setWriteCompleteCallback(m_writeCompleteCallback);
+    conn->setLengthFieldCodec(m_codec);
     conn->setCloseCallback([this](const TcpConnection::Ptr& c)
                            { removeConnection(c); });
 
