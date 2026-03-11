@@ -44,6 +44,26 @@ void TcpServer::setWriteCompleteCallback(WriteCompleteCallback cb)
     m_writeCompleteCallback = std::move(cb);
 }
 
+void TcpServer::setThreadCount(std::size_t threadCount)
+{
+    if (m_started)
+    {
+        throw std::logic_error("TcpServer::setThreadCount after start");
+    }
+
+    m_threadCount = threadCount;
+}
+
+void TcpServer::setThreadInitCallback(ThreadInitCallback cb)
+{
+    if (m_started)
+    {
+        throw std::logic_error("TcpServer::setThreadInitCallback after start");
+    }
+
+    m_threadInitCallback = std::move(cb);
+}
+
 void TcpServer::start()
 {
     if (m_started)
@@ -52,6 +72,24 @@ void TcpServer::start()
     }
 
     m_loop->assertInLoopThread();
+
+    m_threadPool = std::make_unique<EventLoopThreadPool>(m_loop, m_name + "-io", m_threadCount);
+    m_threadPool->start();
+
+    if (m_threadInitCallback)
+    {
+        if (m_threadPool->loops().empty())
+        {
+            m_threadInitCallback();
+        }
+        else
+        {
+            for (auto* loop : m_threadPool->loops())
+            {
+                loop->runInLoop(m_threadInitCallback);
+            }
+        }
+    }
 
     m_acceptor.listen();
 
@@ -83,15 +121,26 @@ std::size_t TcpServer::connectionCount() const noexcept
     return m_connections.size();
 }
 
+std::size_t TcpServer::threadCount() const noexcept
+{
+    return m_threadCount;
+}
+
 void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
 {
     m_loop->assertInLoopThread();
+
+    EventLoop* ioLoop = m_loop;
+    if (m_threadPool != nullptr)
+    {
+        ioLoop = m_threadPool->getNextLoop();
+    }
 
     const auto connName = m_name + "-" + std::to_string(m_nextConnId++);
     const auto localAddr = socket.localAddress();
 
     auto conn = std::make_shared<TcpConnection>(
-            m_loop,
+            ioLoop,
             connName,
             std::move(socket),
             localAddr,
@@ -104,7 +153,9 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
                            { removeConnection(c); });
 
     m_connections.emplace(connName, conn);
-    conn->connectEstablished();
+
+    ioLoop->runInLoop([conn]()
+                      { conn->connectEstablished(); });
 }
 
 void TcpServer::removeConnection(const TcpConnection::Ptr& conn)
@@ -119,10 +170,14 @@ void TcpServer::removeConnectionInLoop(const TcpConnection::Ptr& conn)
     m_loop->assertInLoopThread();
 
     const auto erased = m_connections.erase(conn->name());
-    if (erased > 0)
+    if (erased == 0)
     {
-        conn->connectDestroyed();
+        return;
     }
+
+    auto* ioLoop = conn->ownerLoop();
+    ioLoop->queueInLoop([conn]()
+                        { conn->connectDestroyed(); });
 }
 
 }  // namespace dbase::net

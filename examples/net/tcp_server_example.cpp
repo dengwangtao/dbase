@@ -24,29 +24,42 @@ int main()
         dbase::net::InetAddress listenAddr(9781, true, false);
 
         dbase::net::TcpServer server(&loop, listenAddr, "echo-server", false, false);
+        server.setThreadCount(3);
+
+        server.setThreadInitCallback([]()
+                                     { DBASE_LOG_INFO("io loop init, tid={}", dbase::thread::current_thread::tid()); });
 
         server.setConnectionCallback(
                 [](const dbase::net::TcpConnection::Ptr& conn)
                 {
                     DBASE_LOG_INFO(
-                            "connection {} state={} peer={}",
+                            "connection {} state={} peer={} io_tid={}",
                             conn->name(),
                             static_cast<int>(conn->state()),
-                            conn->peerAddress().toIpPort());
+                            conn->peerAddress().toIpPort(),
+                            dbase::thread::current_thread::tid());
                 });
 
         server.setMessageCallback(
                 [](const dbase::net::TcpConnection::Ptr& conn, dbase::net::Buffer& buffer)
                 {
                     const auto msg = buffer.retrieveAllAsString();
-                    DBASE_LOG_INFO("recv {} bytes from {}: {}", msg.size(), conn->name(), msg);
+                    DBASE_LOG_INFO(
+                            "recv {} bytes from {} on tid={}: {}",
+                            msg.size(),
+                            conn->name(),
+                            dbase::thread::current_thread::tid(),
+                            msg);
                     conn->send(msg);
                 });
 
         server.setWriteCompleteCallback(
                 [](const dbase::net::TcpConnection::Ptr& conn)
                 {
-                    DBASE_LOG_INFO("write complete: {}", conn->name());
+                    DBASE_LOG_INFO(
+                            "write complete: {} tid={}",
+                            conn->name(),
+                            dbase::thread::current_thread::tid());
                 });
 
         server.start();
