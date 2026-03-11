@@ -408,8 +408,6 @@ void TcpConnection::sendInLoop(std::string data)
         return;
     }
 
-    touchActive();
-
     if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
     {
         const int n = SocketOps::write(m_socket.fd(), data.data(), data.size());
@@ -540,7 +538,6 @@ void TcpConnection::handleWrite()
         const std::size_t n = m_outputBuffer.writeFd(m_socket.fd());
         if (n > 0)
         {
-            touchActive();
             continue;
         }
 

@@ -267,7 +267,7 @@ void TcpServer::startIdleCheck()
     {
         if (m_idleTimeout.count() > 0 && m_heartbeatInterval.count() > 0)
         {
-            return std::min(m_idleTimeout / 2, m_heartbeatInterval);
+            return std::min(std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2), m_heartbeatInterval);
         }
 
         if (m_idleTimeout.count() > 0)
