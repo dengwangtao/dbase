@@ -7,6 +7,9 @@
 #include "dbase/net/length_field_codec.h"
 #include "dbase/net/socket.h"
 
+#include <any>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -36,6 +39,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         static constexpr int kCodecError = -1001;
         static constexpr int kOutputBufferOverflowError = -1002;
 
+        using Clock = std::chrono::steady_clock;
+        using TimePoint = Clock::time_point;
         using Ptr = std::shared_ptr<TcpConnection>;
         using ConnectionCallback = std::function<void(const Ptr&)>;
         using MessageCallback = std::function<void(const Ptr&, Buffer&)>;
@@ -79,6 +84,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] std::size_t maxOutputBufferBytes() const noexcept;
         [[nodiscard]] OutputOverflowPolicy outputOverflowPolicy() const noexcept;
 
+        [[nodiscard]] TimePoint connectedAt() const noexcept;
+        [[nodiscard]] TimePoint lastActiveAt() const noexcept;
+        [[nodiscard]] TimePoint lastProbeAt() const noexcept;
+        [[nodiscard]] std::chrono::milliseconds idleFor() const noexcept;
+        [[nodiscard]] std::chrono::milliseconds probeIdleFor() const noexcept;
+
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
@@ -93,6 +104,23 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
         void setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcept;
 
+        void setContext(std::any context);
+        [[nodiscard]] const std::any& context() const noexcept;
+        [[nodiscard]] std::any& context() noexcept;
+        void clearContext() noexcept;
+
+        template <typename T>
+        [[nodiscard]] const T* contextAs() const noexcept
+        {
+            return std::any_cast<T>(&m_context);
+        }
+
+        template <typename T>
+        [[nodiscard]] T* contextAs() noexcept
+        {
+            return std::any_cast<T>(&m_context);
+        }
+
         void connectEstablished();
         void connectDestroyed();
 
@@ -103,7 +131,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void shutdown();
         void forceClose();
 
+        void markKeepAliveProbeSent() noexcept;
+
     private:
+        static std::int64_t toTick(TimePoint tp) noexcept;
+        static TimePoint fromTick(std::int64_t tick) noexcept;
+
         void sendInLoop(std::string data);
         void shutdownInLoop();
         void forceCloseInLoop();
@@ -117,6 +150,7 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] bool handleOutputBufferAppend(std::string_view data);
         void notifyHighWaterMark(std::size_t bytes);
         void handleOutputOverflow();
+        void touchActive() noexcept;
 
         void setState(State state) noexcept;
 
@@ -135,6 +169,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
         OutputOverflowPolicy m_outputOverflowPolicy{OutputOverflowPolicy::CloseConnection};
+
+        std::atomic<std::int64_t> m_connectedAtTick{0};
+        std::atomic<std::int64_t> m_lastActiveAtTick{0};
+        std::atomic<std::int64_t> m_lastProbeAtTick{0};
+
+        std::any m_context;
 
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;

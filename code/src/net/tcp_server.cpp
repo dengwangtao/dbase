@@ -1,7 +1,9 @@
 #include "dbase/net/tcp_server.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace dbase::net
 {
@@ -27,7 +29,14 @@ TcpServer::TcpServer(
             });
 }
 
-TcpServer::~TcpServer() = default;
+TcpServer::~TcpServer()
+{
+    if (m_idleCheckTimerId != 0)
+    {
+        m_loop->cancelTimer(m_idleCheckTimerId);
+        m_idleCheckTimerId = 0;
+    }
+}
 
 void TcpServer::setConnectionCallback(ConnectionCallback cb)
 {
@@ -52,6 +61,16 @@ void TcpServer::setWriteCompleteCallback(WriteCompleteCallback cb)
 void TcpServer::setHighWaterMarkCallback(HighWaterMarkCallback cb)
 {
     m_highWaterMarkCallback = std::move(cb);
+}
+
+void TcpServer::setHeartbeatCallback(HeartbeatCallback cb)
+{
+    m_heartbeatCallback = std::move(cb);
+}
+
+void TcpServer::setIdleCallback(IdleCallback cb)
+{
+    m_idleCallback = std::move(cb);
 }
 
 void TcpServer::setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec)
@@ -99,6 +118,26 @@ void TcpServer::setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy poli
     m_outputOverflowPolicy = policy;
 }
 
+void TcpServer::setIdleTimeout(std::chrono::milliseconds timeout) noexcept
+{
+    m_idleTimeout = timeout;
+}
+
+std::chrono::milliseconds TcpServer::idleTimeout() const noexcept
+{
+    return m_idleTimeout;
+}
+
+void TcpServer::setHeartbeatInterval(std::chrono::milliseconds interval) noexcept
+{
+    m_heartbeatInterval = interval;
+}
+
+std::chrono::milliseconds TcpServer::heartbeatInterval() const noexcept
+{
+    return m_heartbeatInterval;
+}
+
 void TcpServer::start()
 {
     if (m_started)
@@ -132,6 +171,8 @@ void TcpServer::start()
     m_acceptChannel->setReadCallback([this]()
                                      { m_acceptor.acceptAvailable(64); });
     m_acceptChannel->enableReading();
+
+    startIdleCheck();
 
     m_started = true;
 }
@@ -218,6 +259,107 @@ void TcpServer::removeConnectionInLoop(const TcpConnection::Ptr& conn)
     auto* ioLoop = conn->ownerLoop();
     ioLoop->queueInLoop([conn]()
                         { conn->connectDestroyed(); });
+}
+
+void TcpServer::startIdleCheck()
+{
+    const auto baseInterval = [&]() -> std::chrono::milliseconds
+    {
+        if (m_idleTimeout.count() > 0 && m_heartbeatInterval.count() > 0)
+        {
+            return std::min(m_idleTimeout / 2, m_heartbeatInterval);
+        }
+
+        if (m_idleTimeout.count() > 0)
+        {
+            return std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2);
+        }
+
+        if (m_heartbeatInterval.count() > 0)
+        {
+            return m_heartbeatInterval;
+        }
+
+        return std::chrono::milliseconds(0);
+    }();
+
+    if (baseInterval.count() <= 0)
+    {
+        return;
+    }
+
+    m_idleCheckTimerId = m_loop->runEvery(baseInterval, [this]()
+                                          { checkIdleConnections(); });
+}
+
+void TcpServer::checkIdleConnections()
+{
+    m_loop->assertInLoopThread();
+
+    if (m_connections.empty())
+    {
+        return;
+    }
+
+    std::vector<TcpConnection::Ptr> idleConnections;
+    std::vector<TcpConnection::Ptr> heartbeatConnections;
+
+    idleConnections.reserve(m_connections.size());
+    heartbeatConnections.reserve(m_connections.size());
+
+    for (const auto& [name, conn] : m_connections)
+    {
+        (void)name;
+
+        if (!conn || !conn->connected())
+        {
+            continue;
+        }
+
+        const auto idle = conn->idleFor();
+
+        if (m_idleTimeout.count() > 0 && idle >= m_idleTimeout)
+        {
+            idleConnections.emplace_back(conn);
+            continue;
+        }
+
+        if (m_heartbeatInterval.count() > 0 && m_heartbeatCallback)
+        {
+            const auto lastProbe = conn->lastProbeAt();
+            const bool neverProbed = (lastProbe == TcpConnection::TimePoint{});
+            const bool probeExpired = !neverProbed && conn->probeIdleFor() >= m_heartbeatInterval;
+
+            if (idle >= m_heartbeatInterval && (neverProbed || probeExpired))
+            {
+                heartbeatConnections.emplace_back(conn);
+            }
+        }
+    }
+
+    for (const auto& conn : heartbeatConnections)
+    {
+        auto* ioLoop = conn->ownerLoop();
+        ioLoop->queueInLoop([conn, cb = m_heartbeatCallback]()
+                            {
+            conn->markKeepAliveProbeSent();
+            cb(conn); });
+    }
+
+    for (const auto& conn : idleConnections)
+    {
+        auto* ioLoop = conn->ownerLoop();
+        if (m_idleCallback)
+        {
+            ioLoop->queueInLoop([conn, cb = m_idleCallback]()
+                                { cb(conn); });
+        }
+        else
+        {
+            ioLoop->queueInLoop([conn]()
+                                { conn->forceClose(); });
+        }
+    }
 }
 
 }  // namespace dbase::net

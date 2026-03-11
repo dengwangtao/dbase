@@ -144,6 +144,43 @@ TcpConnection::OutputOverflowPolicy TcpConnection::outputOverflowPolicy() const 
     return m_outputOverflowPolicy;
 }
 
+TcpConnection::TimePoint TcpConnection::connectedAt() const noexcept
+{
+    return fromTick(m_connectedAtTick.load(std::memory_order_acquire));
+}
+
+TcpConnection::TimePoint TcpConnection::lastActiveAt() const noexcept
+{
+    return fromTick(m_lastActiveAtTick.load(std::memory_order_acquire));
+}
+
+TcpConnection::TimePoint TcpConnection::lastProbeAt() const noexcept
+{
+    return fromTick(m_lastProbeAtTick.load(std::memory_order_acquire));
+}
+
+std::chrono::milliseconds TcpConnection::idleFor() const noexcept
+{
+    const auto tick = m_lastActiveAtTick.load(std::memory_order_acquire);
+    if (tick == 0)
+    {
+        return std::chrono::milliseconds(0);
+    }
+
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - fromTick(tick));
+}
+
+std::chrono::milliseconds TcpConnection::probeIdleFor() const noexcept
+{
+    const auto tick = m_lastProbeAtTick.load(std::memory_order_acquire);
+    if (tick == 0)
+    {
+        return std::chrono::milliseconds(0);
+    }
+
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - fromTick(tick));
+}
+
 void TcpConnection::setConnectionCallback(ConnectionCallback cb)
 {
     m_connectionCallback = std::move(cb);
@@ -199,6 +236,26 @@ void TcpConnection::setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcep
     m_outputOverflowPolicy = policy;
 }
 
+void TcpConnection::setContext(std::any context)
+{
+    m_context = std::move(context);
+}
+
+const std::any& TcpConnection::context() const noexcept
+{
+    return m_context;
+}
+
+std::any& TcpConnection::context() noexcept
+{
+    return m_context;
+}
+
+void TcpConnection::clearContext() noexcept
+{
+    m_context.reset();
+}
+
 void TcpConnection::connectEstablished()
 {
     m_loop->assertInLoopThread();
@@ -209,6 +266,13 @@ void TcpConnection::connectEstablished()
     }
 
     setState(State::Connected);
+
+    const auto now = Clock::now();
+    const auto tick = toTick(now);
+    m_connectedAtTick.store(tick, std::memory_order_release);
+    m_lastActiveAtTick.store(tick, std::memory_order_release);
+    m_lastProbeAtTick.store(0, std::memory_order_release);
+
     m_channel->tie(shared_from_this());
     m_channel->enableReading();
 
@@ -315,6 +379,26 @@ void TcpConnection::forceClose()
                         { self->forceCloseInLoop(); });
 }
 
+void TcpConnection::markKeepAliveProbeSent() noexcept
+{
+    m_lastProbeAtTick.store(toTick(Clock::now()), std::memory_order_release);
+}
+
+std::int64_t TcpConnection::toTick(TimePoint tp) noexcept
+{
+    return std::chrono::duration_cast<std::chrono::microseconds>(tp.time_since_epoch()).count();
+}
+
+TcpConnection::TimePoint TcpConnection::fromTick(std::int64_t tick) noexcept
+{
+    if (tick == 0)
+    {
+        return TimePoint{};
+    }
+
+    return TimePoint(std::chrono::microseconds(tick));
+}
+
 void TcpConnection::sendInLoop(std::string data)
 {
     m_loop->assertInLoopThread();
@@ -323,6 +407,8 @@ void TcpConnection::sendInLoop(std::string data)
     {
         return;
     }
+
+    touchActive();
 
     if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
     {
@@ -403,6 +489,8 @@ void TcpConnection::handleRead()
         const std::size_t n = m_inputBuffer.readFd(m_socket.fd());
         if (n > 0)
         {
+            touchActive();
+
             if (m_codec && m_frameMessageCallback)
             {
                 handleCodecMessages();
@@ -452,6 +540,7 @@ void TcpConnection::handleWrite()
         const std::size_t n = m_outputBuffer.writeFd(m_socket.fd());
         if (n > 0)
         {
+            touchActive();
             continue;
         }
 
@@ -591,6 +680,12 @@ void TcpConnection::handleOutputOverflow()
             }
             break;
     }
+}
+
+void TcpConnection::touchActive() noexcept
+{
+    m_lastActiveAtTick.store(toTick(Clock::now()), std::memory_order_release);
+    m_lastProbeAtTick.store(0, std::memory_order_release);
 }
 
 void TcpConnection::setState(State state) noexcept

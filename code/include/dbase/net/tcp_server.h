@@ -6,6 +6,7 @@
 #include "dbase/net/length_field_codec.h"
 #include "dbase/net/tcp_connection.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -21,6 +22,8 @@ class TcpServer
         using FrameMessageCallback = TcpConnection::FrameMessageCallback;
         using WriteCompleteCallback = TcpConnection::WriteCompleteCallback;
         using HighWaterMarkCallback = TcpConnection::HighWaterMarkCallback;
+        using HeartbeatCallback = std::function<void(const TcpConnection::Ptr&)>;
+        using IdleCallback = std::function<void(const TcpConnection::Ptr&)>;
         using ThreadInitCallback = EventLoop::Functor;
 
         TcpServer(
@@ -40,6 +43,8 @@ class TcpServer
         void setFrameMessageCallback(FrameMessageCallback cb);
         void setWriteCompleteCallback(WriteCompleteCallback cb);
         void setHighWaterMarkCallback(HighWaterMarkCallback cb);
+        void setHeartbeatCallback(HeartbeatCallback cb);
+        void setIdleCallback(IdleCallback cb);
 
         void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
         [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
@@ -49,6 +54,12 @@ class TcpServer
 
         void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
         void setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy policy) noexcept;
+
+        void setIdleTimeout(std::chrono::milliseconds timeout) noexcept;
+        [[nodiscard]] std::chrono::milliseconds idleTimeout() const noexcept;
+
+        void setHeartbeatInterval(std::chrono::milliseconds interval) noexcept;
+        [[nodiscard]] std::chrono::milliseconds heartbeatInterval() const noexcept;
 
         void start();
 
@@ -62,6 +73,8 @@ class TcpServer
         void newConnection(Socket socket, const InetAddress& peerAddr);
         void removeConnection(const TcpConnection::Ptr& conn);
         void removeConnectionInLoop(const TcpConnection::Ptr& conn);
+        void startIdleCheck();
+        void checkIdleConnections();
 
     private:
         EventLoop* m_loop{nullptr};
@@ -76,6 +89,9 @@ class TcpServer
         std::shared_ptr<LengthFieldCodec> m_codec;
         std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
         TcpConnection::OutputOverflowPolicy m_outputOverflowPolicy{TcpConnection::OutputOverflowPolicy::CloseConnection};
+        std::chrono::milliseconds m_idleTimeout{0};
+        std::chrono::milliseconds m_heartbeatInterval{0};
+        EventLoop::TimerId m_idleCheckTimerId{0};
 
         ThreadInitCallback m_threadInitCallback;
         ConnectionCallback m_connectionCallback;
@@ -83,6 +99,8 @@ class TcpServer
         FrameMessageCallback m_frameMessageCallback;
         WriteCompleteCallback m_writeCompleteCallback;
         HighWaterMarkCallback m_highWaterMarkCallback;
+        HeartbeatCallback m_heartbeatCallback;
+        IdleCallback m_idleCallback;
 
         std::unordered_map<std::string, TcpConnection::Ptr> m_connections;
 };
