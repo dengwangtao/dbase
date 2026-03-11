@@ -118,6 +118,33 @@ void TcpServer::setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy poli
     m_outputOverflowPolicy = policy;
 }
 
+void TcpServer::enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept
+{
+    if (pauseHighWaterMark == 0)
+    {
+        m_autoReadFlowControlEnabled = false;
+        m_readPauseHighWaterMark = 0;
+        m_readResumeLowWaterMark = 0;
+        return;
+    }
+
+    if (resumeLowWaterMark >= pauseHighWaterMark)
+    {
+        resumeLowWaterMark = pauseHighWaterMark / 2;
+    }
+
+    m_autoReadFlowControlEnabled = true;
+    m_readPauseHighWaterMark = pauseHighWaterMark;
+    m_readResumeLowWaterMark = resumeLowWaterMark;
+}
+
+void TcpServer::disableAutoReadFlowControl() noexcept
+{
+    m_autoReadFlowControlEnabled = false;
+    m_readPauseHighWaterMark = 0;
+    m_readResumeLowWaterMark = 0;
+}
+
 void TcpServer::setIdleTimeout(std::chrono::milliseconds timeout) noexcept
 {
     m_idleTimeout = timeout;
@@ -230,6 +257,12 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
     conn->setLengthFieldCodec(m_codec);
     conn->setMaxOutputBufferBytes(m_maxOutputBufferBytes);
     conn->setOutputOverflowPolicy(m_outputOverflowPolicy);
+
+    if (m_autoReadFlowControlEnabled)
+    {
+        conn->enableAutoReadFlowControl(m_readPauseHighWaterMark, m_readResumeLowWaterMark);
+    }
+
     conn->setCloseCallback([this](const TcpConnection::Ptr& c)
                            { removeConnection(c); });
 

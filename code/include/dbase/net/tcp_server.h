@@ -55,6 +55,9 @@ class TcpServer
         void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
         void setOutputOverflowPolicy(TcpConnection::OutputOverflowPolicy policy) noexcept;
 
+        void enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept;
+        void disableAutoReadFlowControl() noexcept;
+
         void setIdleTimeout(std::chrono::milliseconds timeout) noexcept;
         [[nodiscard]] std::chrono::milliseconds idleTimeout() const noexcept;
 
@@ -89,6 +92,11 @@ class TcpServer
         std::shared_ptr<LengthFieldCodec> m_codec;
         std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
         TcpConnection::OutputOverflowPolicy m_outputOverflowPolicy{TcpConnection::OutputOverflowPolicy::CloseConnection};
+
+        bool m_autoReadFlowControlEnabled{false};
+        std::size_t m_readPauseHighWaterMark{0};
+        std::size_t m_readResumeLowWaterMark{0};
+
         std::chrono::milliseconds m_idleTimeout{0};
         std::chrono::milliseconds m_heartbeatInterval{0};
         EventLoop::TimerId m_idleCheckTimerId{0};

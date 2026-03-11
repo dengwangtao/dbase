@@ -181,6 +181,31 @@ std::chrono::milliseconds TcpConnection::probeIdleFor() const noexcept
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - fromTick(tick));
 }
 
+bool TcpConnection::reading() const noexcept
+{
+    return m_channel && m_channel->isReading();
+}
+
+bool TcpConnection::readPausedByFlowControl() const noexcept
+{
+    return m_readPausedByFlowControl;
+}
+
+bool TcpConnection::autoReadFlowControlEnabled() const noexcept
+{
+    return m_autoReadFlowControlEnabled;
+}
+
+std::size_t TcpConnection::readPauseHighWaterMark() const noexcept
+{
+    return m_readPauseHighWaterMark;
+}
+
+std::size_t TcpConnection::readResumeLowWaterMark() const noexcept
+{
+    return m_readResumeLowWaterMark;
+}
+
 void TcpConnection::setConnectionCallback(ConnectionCallback cb)
 {
     m_connectionCallback = std::move(cb);
@@ -234,6 +259,87 @@ void TcpConnection::setMaxOutputBufferBytes(std::size_t bytes) noexcept
 void TcpConnection::setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcept
 {
     m_outputOverflowPolicy = policy;
+}
+
+void TcpConnection::enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept
+{
+    if (pauseHighWaterMark == 0)
+    {
+        m_autoReadFlowControlEnabled = false;
+        m_readPauseHighWaterMark = 0;
+        m_readResumeLowWaterMark = 0;
+        m_readPausedByFlowControl = false;
+        return;
+    }
+
+    if (resumeLowWaterMark >= pauseHighWaterMark)
+    {
+        resumeLowWaterMark = pauseHighWaterMark / 2;
+    }
+
+    m_autoReadFlowControlEnabled = true;
+    m_readPauseHighWaterMark = pauseHighWaterMark;
+    m_readResumeLowWaterMark = resumeLowWaterMark;
+}
+
+void TcpConnection::disableAutoReadFlowControl() noexcept
+{
+    m_autoReadFlowControlEnabled = false;
+    m_readPauseHighWaterMark = 0;
+    m_readResumeLowWaterMark = 0;
+    m_readPausedByFlowControl = false;
+}
+
+void TcpConnection::startRead()
+{
+    if (!m_channel)
+    {
+        return;
+    }
+
+    if (m_loop->isInLoopThread())
+    {
+        if (!m_channel->isReading())
+        {
+            m_channel->enableReading();
+        }
+        m_readPausedByFlowControl = false;
+        return;
+    }
+
+    auto self = shared_from_this();
+    m_loop->queueInLoop([self]()
+                        {
+        if (!self->m_channel->isReading())
+        {
+            self->m_channel->enableReading();
+        }
+        self->m_readPausedByFlowControl = false; });
+}
+
+void TcpConnection::stopRead()
+{
+    if (!m_channel)
+    {
+        return;
+    }
+
+    if (m_loop->isInLoopThread())
+    {
+        if (m_channel->isReading())
+        {
+            m_channel->disableReading();
+        }
+        return;
+    }
+
+    auto self = shared_from_this();
+    m_loop->queueInLoop([self]()
+                        {
+        if (self->m_channel->isReading())
+        {
+            self->m_channel->disableReading();
+        } });
 }
 
 void TcpConnection::setContext(std::any context)
@@ -422,6 +528,7 @@ void TcpConnection::sendInLoop(std::string data)
                     return;
                 }
                 m_channel->enableWriting();
+                maybePauseReadForFlowControl();
             }
             else if (m_writeCompleteCallback)
             {
@@ -438,6 +545,7 @@ void TcpConnection::sendInLoop(std::string data)
                 return;
             }
             m_channel->enableWriting();
+            maybePauseReadForFlowControl();
             return;
         }
 
@@ -454,6 +562,8 @@ void TcpConnection::sendInLoop(std::string data)
     {
         m_channel->enableWriting();
     }
+
+    maybePauseReadForFlowControl();
 }
 
 void TcpConnection::shutdownInLoop()
@@ -538,6 +648,7 @@ void TcpConnection::handleWrite()
         const std::size_t n = m_outputBuffer.writeFd(m_socket.fd());
         if (n > 0)
         {
+            maybeResumeReadForFlowControl();
             continue;
         }
 
@@ -552,6 +663,7 @@ void TcpConnection::handleWrite()
     }
 
     m_channel->disableWriting();
+    maybeResumeReadForFlowControl();
 
     if (m_writeCompleteCallback)
     {
@@ -683,6 +795,54 @@ void TcpConnection::touchActive() noexcept
 {
     m_lastActiveAtTick.store(toTick(Clock::now()), std::memory_order_release);
     m_lastProbeAtTick.store(0, std::memory_order_release);
+}
+
+void TcpConnection::maybePauseReadForFlowControl()
+{
+    if (!m_autoReadFlowControlEnabled)
+    {
+        return;
+    }
+
+    if (m_readPausedByFlowControl)
+    {
+        return;
+    }
+
+    if (m_outputBuffer.readableBytes() < m_readPauseHighWaterMark)
+    {
+        return;
+    }
+
+    if (m_channel->isReading())
+    {
+        m_channel->disableReading();
+    }
+    m_readPausedByFlowControl = true;
+}
+
+void TcpConnection::maybeResumeReadForFlowControl()
+{
+    if (!m_autoReadFlowControlEnabled)
+    {
+        return;
+    }
+
+    if (!m_readPausedByFlowControl)
+    {
+        return;
+    }
+
+    if (m_outputBuffer.readableBytes() > m_readResumeLowWaterMark)
+    {
+        return;
+    }
+
+    if (!m_channel->isReading())
+    {
+        m_channel->enableReading();
+    }
+    m_readPausedByFlowControl = false;
 }
 
 void TcpConnection::setState(State state) noexcept

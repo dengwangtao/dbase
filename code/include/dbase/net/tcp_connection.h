@@ -90,6 +90,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] std::chrono::milliseconds idleFor() const noexcept;
         [[nodiscard]] std::chrono::milliseconds probeIdleFor() const noexcept;
 
+        [[nodiscard]] bool reading() const noexcept;
+        [[nodiscard]] bool readPausedByFlowControl() const noexcept;
+        [[nodiscard]] bool autoReadFlowControlEnabled() const noexcept;
+        [[nodiscard]] std::size_t readPauseHighWaterMark() const noexcept;
+        [[nodiscard]] std::size_t readResumeLowWaterMark() const noexcept;
+
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
@@ -103,6 +109,12 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         void setMaxOutputBufferBytes(std::size_t bytes) noexcept;
         void setOutputOverflowPolicy(OutputOverflowPolicy policy) noexcept;
+
+        void enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept;
+        void disableAutoReadFlowControl() noexcept;
+
+        void startRead();
+        void stopRead();
 
         void setContext(std::any context);
         [[nodiscard]] const std::any& context() const noexcept;
@@ -151,6 +163,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void notifyHighWaterMark(std::size_t bytes);
         void handleOutputOverflow();
         void touchActive() noexcept;
+        void maybePauseReadForFlowControl();
+        void maybeResumeReadForFlowControl();
 
         void setState(State state) noexcept;
 
@@ -169,6 +183,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
         OutputOverflowPolicy m_outputOverflowPolicy{OutputOverflowPolicy::CloseConnection};
+
+        bool m_autoReadFlowControlEnabled{false};
+        std::size_t m_readPauseHighWaterMark{0};
+        std::size_t m_readResumeLowWaterMark{0};
+        bool m_readPausedByFlowControl{false};
 
         std::atomic<std::int64_t> m_connectedAtTick{0};
         std::atomic<std::int64_t> m_lastActiveAtTick{0};
