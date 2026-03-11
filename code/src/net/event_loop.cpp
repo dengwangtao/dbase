@@ -1,6 +1,7 @@
 #include "dbase/net/event_loop.h"
 
 #include "dbase/net/channel.h"
+#include "dbase/net/epoll_poller.h"
 #include "dbase/net/select_poller.h"
 #include "dbase/net/wakeup_channel.h"
 #include "dbase/thread/current_thread.h"
@@ -17,7 +18,11 @@ Poller::Poller(EventLoop* loop)
 
 EventLoop::EventLoop()
     : m_threadId(dbase::thread::current_thread::tid()),
+#if defined(__linux__)
+      m_poller(std::make_unique<EpollPoller>(this)),
+#else
       m_poller(std::make_unique<SelectPoller>(this)),
+#endif
       m_wakeupChannel(std::make_unique<WakeupChannel>()),
       m_wakeupFdChannel(std::make_unique<Channel>(this, m_wakeupChannel->readFd()))
 {
