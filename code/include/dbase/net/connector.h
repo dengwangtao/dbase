@@ -4,7 +4,6 @@
 #include "dbase/net/event_loop.h"
 #include "dbase/net/inet_address.h"
 #include "dbase/net/socket.h"
-#include "dbase/thread/timer_queue.h"
 
 #include <functional>
 #include <memory>
@@ -67,8 +66,6 @@ class Connector : public std::enable_shared_from_this<Connector>
         SocketType m_socket{kInvalidSocket};
         int m_retryDelayMs{500};
         NewConnectionCallback m_newConnectionCallback;
-
-        std::unique_ptr<dbase::thread::TimerQueue> m_retryTimer;
-        dbase::thread::TimerQueue::TimerId m_retryTimerId{0};
+        EventLoop::TimerId m_retryTimerId{0};
 };
 }  // namespace dbase::net

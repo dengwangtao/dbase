@@ -25,14 +25,24 @@ bool isInProgressError(int err) noexcept
 #endif
 }
 
+// clang-format off
 bool isRetryableConnectError(int err) noexcept
 {
 #if defined(_WIN32)
-    return err == WSAECONNREFUSED || err == WSAENETUNREACH || err == WSAEHOSTUNREACH || err == WSAETIMEDOUT || err == WSAECONNRESET;
+    return err == WSAECONNREFUSED ||
+           err == WSAENETUNREACH ||
+           err == WSAEHOSTUNREACH ||
+           err == WSAETIMEDOUT ||
+           err == WSAECONNRESET;
 #else
-    return err == ECONNREFUSED || err == ENETUNREACH || err == EHOSTUNREACH || err == ETIMEDOUT || err == ECONNRESET;
+    return err == ECONNREFUSED ||
+           err == ENETUNREACH ||
+           err == EHOSTUNREACH ||
+           err == ETIMEDOUT ||
+           err == ECONNRESET;
 #endif
 }
+// clang-format on
 
 int lastSocketErrorCode() noexcept
 {
@@ -46,25 +56,17 @@ int lastSocketErrorCode() noexcept
 
 Connector::Connector(EventLoop* loop, const InetAddress& serverAddr)
     : m_loop(loop),
-      m_serverAddr(serverAddr),
-      m_retryTimer(std::make_unique<dbase::thread::TimerQueue>(nullptr, "connector-retry"))
+      m_serverAddr(serverAddr)
 {
     if (m_loop == nullptr)
     {
         throw std::invalid_argument("Connector loop is null");
     }
-
-    m_retryTimer->start();
 }
 
 Connector::~Connector()
 {
     cancelRetry();
-
-    if (m_retryTimer)
-    {
-        m_retryTimer->stop();
-    }
 
     if (m_channel)
     {
@@ -296,9 +298,8 @@ void Connector::retry()
     auto self = shared_from_this();
     const auto delay = std::chrono::milliseconds(m_retryDelayMs);
 
-    m_retryTimerId = m_retryTimer->runAfter(delay, [self]()
-                                            { self->m_loop->queueInLoop([self]()
-                                                                        { self->startInLoop(); }); });
+    m_retryTimerId = m_loop->runAfter(delay, [self]()
+                                      { self->startInLoop(); });
 
     if (m_retryDelayMs < 30000)
     {
@@ -312,9 +313,9 @@ void Connector::retry()
 
 void Connector::cancelRetry()
 {
-    if (m_retryTimer && m_retryTimerId != 0)
+    if (m_retryTimerId != 0)
     {
-        m_retryTimer->cancel(m_retryTimerId);
+        m_loop->cancelTimer(m_retryTimerId);
         m_retryTimerId = 0;
     }
 }

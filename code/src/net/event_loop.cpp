@@ -6,7 +6,11 @@
 #include "dbase/net/wakeup_channel.h"
 #include "dbase/thread/current_thread.h"
 
+#include <algorithm>
+#include <limits>
+#include <queue>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 namespace dbase::net
@@ -55,8 +59,10 @@ void EventLoop::loop()
 
     while (!m_quit.load(std::memory_order_acquire))
     {
+        processTimers();
+
         m_activeChannels.clear();
-        m_poller->poll(1000, &m_activeChannels);
+        m_poller->poll(getPollTimeoutMs(), &m_activeChannels);
 
         for (auto* channel : m_activeChannels)
         {
@@ -64,6 +70,7 @@ void EventLoop::loop()
         }
 
         doPendingFunctors();
+        processTimers();
     }
 
     m_looping.store(false, std::memory_order_release);
@@ -131,6 +138,43 @@ void EventLoop::queueInLoop(Functor cb)
     }
 }
 
+EventLoop::TimerId EventLoop::runAfter(std::chrono::milliseconds delay, Functor cb)
+{
+    if (delay.count() < 0)
+    {
+        delay = std::chrono::milliseconds(0);
+    }
+
+    return runAt(Clock::now() + delay, std::chrono::milliseconds(0), false, std::move(cb));
+}
+
+EventLoop::TimerId EventLoop::runEvery(std::chrono::milliseconds interval, Functor cb)
+{
+    if (interval.count() <= 0)
+    {
+        throw std::invalid_argument("EventLoop::runEvery interval must be greater than 0");
+    }
+
+    return runAt(Clock::now() + interval, interval, true, std::move(cb));
+}
+
+void EventLoop::cancelTimer(TimerId timerId)
+{
+    if (timerId == 0)
+    {
+        return;
+    }
+
+    if (isInLoopThread())
+    {
+        cancelTimerInLoop(timerId);
+        return;
+    }
+
+    queueInLoop([this, timerId]()
+                { cancelTimerInLoop(timerId); });
+}
+
 void EventLoop::updateChannel(Channel* channel)
 {
     assertInLoopThread();
@@ -179,6 +223,143 @@ void EventLoop::doPendingFunctors()
     }
 
     m_callingPendingFunctors.store(false, std::memory_order_release);
+}
+
+EventLoop::TimerId EventLoop::runAt(TimePoint expiration, std::chrono::milliseconds interval, bool repeat, Functor cb)
+{
+    if (!cb)
+    {
+        throw std::invalid_argument("EventLoop timer callback is empty");
+    }
+
+    auto timerTask = std::make_shared<TimerTask>();
+    timerTask->id = m_nextTimerId.fetch_add(1, std::memory_order_relaxed);
+    timerTask->expiration = expiration;
+    timerTask->interval = interval;
+    timerTask->repeat = repeat;
+    timerTask->callback = std::move(cb);
+
+    if (isInLoopThread())
+    {
+        addTimerInLoop(timerTask);
+    }
+    else
+    {
+        queueInLoop([this, timerTask]()
+                    { addTimerInLoop(timerTask); });
+    }
+
+    return timerTask->id;
+}
+
+void EventLoop::addTimerInLoop(const std::shared_ptr<TimerTask>& timerTask)
+{
+    assertInLoopThread();
+
+    bool wake = m_timers.empty() || timerTask->expiration < m_timers.top()->expiration;
+
+    m_timerMap[timerTask->id] = timerTask;
+    m_timers.push(timerTask);
+
+    if (wake)
+    {
+        wakeup();
+    }
+}
+
+void EventLoop::cancelTimerInLoop(TimerId timerId)
+{
+    assertInLoopThread();
+
+    const auto it = m_timerMap.find(timerId);
+    if (it == m_timerMap.end())
+    {
+        return;
+    }
+
+    it->second->cancelled = true;
+    m_timerMap.erase(it);
+}
+
+void EventLoop::processTimers()
+{
+    assertInLoopThread();
+
+    const auto now = Clock::now();
+
+    while (!m_timers.empty())
+    {
+        auto timerTask = m_timers.top();
+
+        if (timerTask->cancelled)
+        {
+            m_timers.pop();
+            continue;
+        }
+
+        if (timerTask->expiration > now)
+        {
+            break;
+        }
+
+        m_timers.pop();
+
+        const auto it = m_timerMap.find(timerTask->id);
+        if (it == m_timerMap.end())
+        {
+            continue;
+        }
+
+        if (!timerTask->cancelled && timerTask->callback)
+        {
+            timerTask->callback();
+        }
+
+        if (timerTask->repeat && !timerTask->cancelled)
+        {
+            timerTask->expiration = Clock::now() + timerTask->interval;
+            m_timers.push(timerTask);
+        }
+        else
+        {
+            m_timerMap.erase(timerTask->id);
+        }
+    }
+}
+
+int EventLoop::getPollTimeoutMs() const noexcept
+{
+    if (m_timers.empty())
+    {
+        return 10000;
+    }
+
+    const auto now = Clock::now();
+    const auto& timerTask = m_timers.top();
+
+    if (timerTask->cancelled)
+    {
+        return 0;
+    }
+
+    if (timerTask->expiration <= now)
+    {
+        return 0;
+    }
+
+    const auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(timerTask->expiration - now).count();
+
+    if (diff <= 0)
+    {
+        return 0;
+    }
+
+    if (diff > std::numeric_limits<int>::max())
+    {
+        return std::numeric_limits<int>::max();
+    }
+
+    return static_cast<int>(diff);
 }
 
 }  // namespace dbase::net
