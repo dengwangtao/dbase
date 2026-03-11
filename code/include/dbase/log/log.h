@@ -170,3 +170,4 @@ void logf(
 
 #define DBASE_LOG_FATAL(...) \
     ::dbase::log::logf(::dbase::log::Level::Fatal, std::source_location::current(), __VA_ARGS__)
+
