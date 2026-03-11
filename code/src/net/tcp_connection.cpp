@@ -73,13 +73,7 @@ TcpConnection::TcpConnection(
                                 { handleError(); });
 }
 
-TcpConnection::~TcpConnection()
-{
-    if (m_channel)
-    {
-        m_channel->disableAll();
-    }
-}
+TcpConnection::~TcpConnection() = default;
 
 EventLoop* TcpConnection::ownerLoop() const noexcept
 {
@@ -188,10 +182,9 @@ void TcpConnection::connectDestroyed()
 {
     m_loop->assertInLoopThread();
 
-    if (m_state == State::Connected || m_state == State::Disconnecting)
+    if (m_state != State::Disconnected)
     {
         setState(State::Disconnected);
-        m_channel->disableAll();
 
         if (m_connectionCallback)
         {
@@ -201,6 +194,7 @@ void TcpConnection::connectDestroyed()
 
     if (m_channel)
     {
+        m_channel->disableAll();
         m_channel->remove();
     }
 }
