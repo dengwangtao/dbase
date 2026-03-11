@@ -3,6 +3,7 @@
 #include "dbase/net/event_loop.h"
 
 #include <stdexcept>
+#include <utility>
 
 namespace dbase::net
 {
@@ -130,6 +131,11 @@ void Channel::handleEvent()
 
     if ((m_revents & (kReadEvent | kWriteEvent)) == 0)
     {
+        if (m_errorCallback)
+        {
+            m_errorCallback();
+        }
+
         if (m_closeCallback)
         {
             m_closeCallback();

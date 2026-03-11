@@ -73,9 +73,7 @@ TcpConnection::TcpConnection(
                                 { handleError(); });
 }
 
-TcpConnection::~TcpConnection()
-{
-}
+TcpConnection::~TcpConnection() = default;
 
 EventLoop* TcpConnection::ownerLoop() const noexcept
 {
