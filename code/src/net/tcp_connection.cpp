@@ -5,7 +5,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 #if defined(_WIN32)
 #include <WinSock2.h>
@@ -373,44 +372,44 @@ void TcpConnection::handleRead()
 {
     m_loop->assertInLoopThread();
 
-    std::vector<char> buf(64 * 1024);
-    const int n = SocketOps::read(m_socket.fd(), buf.data(), buf.size());
-
-    if (n > 0)
+    for (;;)
     {
-        m_inputBuffer.append(buf.data(), static_cast<std::size_t>(n));
-
-        if (m_codec && m_frameMessageCallback)
+        const std::size_t n = m_inputBuffer.readFd(m_socket.fd());
+        if (n > 0)
         {
-            handleCodecMessages();
+            if (m_codec && m_frameMessageCallback)
+            {
+                handleCodecMessages();
+            }
+            else if (m_messageCallback)
+            {
+                m_messageCallback(shared_from_this(), m_inputBuffer);
+            }
+
+            continue;
         }
-        else if (m_messageCallback)
+
+        const int err = lastSocketErrorCode();
+        if (isWouldBlockError(err))
         {
-            m_messageCallback(shared_from_this(), m_inputBuffer);
+            break;
         }
 
+        if (isConnectionResetError(err))
+        {
+            handleClose();
+            return;
+        }
+
+        if (err == 0)
+        {
+            handleClose();
+            return;
+        }
+
+        handleError();
         return;
     }
-
-    if (n == 0)
-    {
-        handleClose();
-        return;
-    }
-
-    const int err = lastSocketErrorCode();
-    if (isWouldBlockError(err))
-    {
-        return;
-    }
-
-    if (isConnectionResetError(err))
-    {
-        handleClose();
-        return;
-    }
-
-    handleError();
 }
 
 void TcpConnection::handleWrite()
@@ -422,53 +421,35 @@ void TcpConnection::handleWrite()
         return;
     }
 
-    if (m_outputBuffer.readableBytes() == 0)
+    while (m_outputBuffer.readableBytes() > 0)
     {
-        m_channel->disableWriting();
-
-        if (m_writeCompleteCallback)
+        const std::size_t n = m_outputBuffer.writeFd(m_socket.fd());
+        if (n > 0)
         {
-            m_writeCompleteCallback(shared_from_this());
+            continue;
         }
 
-        if (m_state == State::Disconnecting)
+        const int err = lastSocketErrorCode();
+        if (isWouldBlockError(err))
         {
-            shutdownInLoop();
+            return;
         }
 
+        handleError();
         return;
     }
 
-    const int n = SocketOps::write(m_socket.fd(), m_outputBuffer.peek(), m_outputBuffer.readableBytes());
-    if (n > 0)
+    m_channel->disableWriting();
+
+    if (m_writeCompleteCallback)
     {
-        m_outputBuffer.retrieve(static_cast<std::size_t>(n));
-
-        if (m_outputBuffer.readableBytes() == 0)
-        {
-            m_channel->disableWriting();
-
-            if (m_writeCompleteCallback)
-            {
-                m_writeCompleteCallback(shared_from_this());
-            }
-
-            if (m_state == State::Disconnecting)
-            {
-                shutdownInLoop();
-            }
-        }
-
-        return;
+        m_writeCompleteCallback(shared_from_this());
     }
 
-    const int err = lastSocketErrorCode();
-    if (isWouldBlockError(err))
+    if (m_state == State::Disconnecting)
     {
-        return;
+        shutdownInLoop();
     }
-
-    handleError();
 }
 
 void TcpConnection::handleClose()

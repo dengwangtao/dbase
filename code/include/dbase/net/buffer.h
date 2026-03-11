@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dbase/net/socket_ops.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -93,6 +95,9 @@ class Buffer
         void prependUInt16(std::uint16_t value);
         void prependUInt32(std::uint32_t value);
         void prependUInt64(std::uint64_t value);
+
+        [[nodiscard]] std::size_t readFd(SocketType fd);
+        [[nodiscard]] std::size_t writeFd(SocketType fd);
 
         void shrink(std::size_t reserve = 0);
         void clear() noexcept;

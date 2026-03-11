@@ -6,6 +6,12 @@
 #include <cstring>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
+
+#if !defined(_WIN32)
+#include <sys/uio.h>
+#include <unistd.h>
+#endif
 
 namespace dbase::net
 {
@@ -20,17 +26,29 @@ template <>
     return static_cast<std::uint16_t>((value << 8) | (value >> 8));
 }
 
+// clang-format off
 template <>
 [[nodiscard]] std::uint32_t byteswapValue(std::uint32_t value) noexcept
 {
-    return ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) | ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+    return ((value & 0x000000FFu) << 24) |
+           ((value & 0x0000FF00u) << 8) |
+           ((value & 0x00FF0000u) >> 8) |
+           ((value & 0xFF000000u) >> 24);
 }
 
 template <>
 [[nodiscard]] std::uint64_t byteswapValue(std::uint64_t value) noexcept
 {
-    return ((value & 0x00000000000000FFull) << 56) | ((value & 0x000000000000FF00ull) << 40) | ((value & 0x0000000000FF0000ull) << 24) | ((value & 0x00000000FF000000ull) << 8) | ((value & 0x000000FF00000000ull) >> 8) | ((value & 0x0000FF0000000000ull) >> 24) | ((value & 0x00FF000000000000ull) >> 40) | ((value & 0xFF00000000000000ull) >> 56);
+    return ((value & 0x00000000000000FFull) << 56) |
+           ((value & 0x000000000000FF00ull) << 40) |
+           ((value & 0x0000000000FF0000ull) << 24) |
+           ((value & 0x00000000FF000000ull) << 8) |
+           ((value & 0x000000FF00000000ull) >> 8) |
+           ((value & 0x0000FF0000000000ull) >> 24) |
+           ((value & 0x00FF000000000000ull) >> 40) |
+           ((value & 0xFF00000000000000ull) >> 56);
 }
+// clang-format on
 
 template <typename T>
 [[nodiscard]] T hostToBigEndian(T value) noexcept
@@ -549,6 +567,66 @@ void Buffer::prependUInt64(std::uint64_t value)
 
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
+}
+
+std::size_t Buffer::readFd(SocketType fd)
+{
+#if defined(_WIN32)
+    ensureWritableBytes(64 * 1024);
+    const int n = SocketOps::read(fd, beginWrite(), writableBytes());
+    if (n > 0)
+    {
+        hasWritten(static_cast<std::size_t>(n));
+        return static_cast<std::size_t>(n);
+    }
+    return 0;
+#else
+    char extrabuf[64 * 1024];
+    iovec vec[2];
+
+    const std::size_t writable = writableBytes();
+    vec[0].iov_base = beginWrite();
+    vec[0].iov_len = writable;
+    vec[1].iov_base = extrabuf;
+    vec[1].iov_len = sizeof(extrabuf);
+
+    const int iovcnt = writable < sizeof(extrabuf) ? 2 : 1;
+    const ssize_t n = ::readv(fd, vec, iovcnt);
+
+    if (n <= 0)
+    {
+        return 0;
+    }
+
+    if (static_cast<std::size_t>(n) <= writable)
+    {
+        hasWritten(static_cast<std::size_t>(n));
+    }
+    else
+    {
+        hasWritten(writable);
+        append(extrabuf, static_cast<std::size_t>(n) - writable);
+    }
+
+    return static_cast<std::size_t>(n);
+#endif
+}
+
+std::size_t Buffer::writeFd(SocketType fd)
+{
+    if (readableBytes() == 0)
+    {
+        return 0;
+    }
+
+    const int n = SocketOps::write(fd, peek(), readableBytes());
+    if (n > 0)
+    {
+        retrieve(static_cast<std::size_t>(n));
+        return static_cast<std::size_t>(n);
+    }
+
+    return 0;
 }
 
 void Buffer::shrink(std::size_t reserve)
