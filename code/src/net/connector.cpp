@@ -55,7 +55,19 @@ Connector::Connector(EventLoop* loop, const InetAddress& serverAddr)
 
 Connector::~Connector()
 {
-    stop();
+    if (m_channel)
+    {
+        m_channel.reset();
+    }
+
+    if (m_socket != kInvalidSocket)
+    {
+        SocketOps::close(m_socket);
+        m_socket = kInvalidSocket;
+    }
+
+    m_state = State::Disconnected;
+    m_started = false;
 }
 
 void Connector::setNewConnectionCallback(NewConnectionCallback cb)
@@ -283,11 +295,15 @@ int Connector::removeAndResetChannelRaw()
     m_loop->assertInLoopThread();
 
     int sock = m_socket;
+
     if (m_channel)
     {
         m_channel->disableAll();
         m_channel->remove();
-        m_channel.reset();
+
+        Channel* rawChannel = m_channel.release();
+        m_loop->queueInLoop([rawChannel]()
+                            { delete rawChannel; });
     }
 
     m_socket = kInvalidSocket;

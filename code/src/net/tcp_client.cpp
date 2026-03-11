@@ -34,10 +34,8 @@ TcpClient::~TcpClient()
         ioLoop->runInLoop([conn]()
                           { conn->connectDestroyed(); });
     }
-    else
-    {
-        m_connector->stop();
-    }
+
+    m_connector->stop();
 }
 
 void TcpClient::setConnectionCallback(ConnectionCallback cb)
