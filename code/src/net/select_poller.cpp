@@ -98,10 +98,7 @@ std::int64_t SelectPoller::poll(int timeoutMs, ChannelList* activeChannels)
 
         if (FD_ISSET(fd, &exceptSet))
         {
-            if (revents == Channel::kNoneEvent)
-            {
-                revents = Channel::kNoneEvent;
-            }
+            revents |= Channel::kErrorEvent;
         }
 
         if (revents != Channel::kNoneEvent)

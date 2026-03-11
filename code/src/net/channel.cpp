@@ -72,6 +72,12 @@ void Channel::setErrorCallback(EventCallback cb)
     m_errorCallback = std::move(cb);
 }
 
+void Channel::tie(const std::shared_ptr<void>& obj)
+{
+    m_tie = obj;
+    m_tied = true;
+}
+
 void Channel::enableReading()
 {
     m_events |= kReadEvent;
@@ -81,6 +87,12 @@ void Channel::enableReading()
 void Channel::enableWriting()
 {
     m_events |= kWriteEvent;
+    update();
+}
+
+void Channel::disableReading()
+{
+    m_events &= ~kReadEvent;
     update();
 }
 
@@ -113,6 +125,33 @@ void Channel::remove()
 
 void Channel::handleEvent()
 {
+    if (m_tied)
+    {
+        const auto guard = m_tie.lock();
+        if (!guard)
+        {
+            return;
+        }
+    }
+
+    handleEventWithGuard();
+}
+
+void Channel::update()
+{
+    m_loop->updateChannel(this);
+}
+
+void Channel::handleEventWithGuard()
+{
+    if ((m_revents & kErrorEvent) != 0)
+    {
+        if (m_errorCallback)
+        {
+            m_errorCallback();
+        }
+    }
+
     if ((m_revents & kReadEvent) != 0)
     {
         if (m_readCallback)
@@ -129,23 +168,12 @@ void Channel::handleEvent()
         }
     }
 
-    if ((m_revents & (kReadEvent | kWriteEvent)) == 0)
+    if ((m_revents & kCloseEvent) != 0)
     {
-        if (m_errorCallback)
-        {
-            m_errorCallback();
-        }
-
         if (m_closeCallback)
         {
             m_closeCallback();
         }
     }
 }
-
-void Channel::update()
-{
-    m_loop->updateChannel(this);
-}
-
 }  // namespace dbase::net

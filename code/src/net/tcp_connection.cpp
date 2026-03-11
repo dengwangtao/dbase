@@ -185,6 +185,7 @@ void TcpConnection::connectEstablished()
     }
 
     setState(State::Connected);
+    m_channel->tie(shared_from_this());
     m_channel->enableReading();
 
     if (m_connectionCallback)

@@ -168,7 +168,12 @@ std::uint32_t EpollPoller::fromEpollEvents(std::uint32_t epollEvents) noexcept
 {
     std::uint32_t revents = Channel::kNoneEvent;
 
-    if ((epollEvents & (EPOLLIN | EPOLLPRI | EPOLLRDHUP | EPOLLHUP)) != 0)
+    if ((epollEvents & (EPOLLERR)) != 0)
+    {
+        revents |= Channel::kErrorEvent;
+    }
+
+    if ((epollEvents & (EPOLLIN | EPOLLPRI)) != 0)
     {
         revents |= Channel::kReadEvent;
     }
@@ -176,6 +181,11 @@ std::uint32_t EpollPoller::fromEpollEvents(std::uint32_t epollEvents) noexcept
     if ((epollEvents & EPOLLOUT) != 0)
     {
         revents |= Channel::kWriteEvent;
+    }
+
+    if ((epollEvents & (EPOLLRDHUP | EPOLLHUP)) != 0)
+    {
+        revents |= Channel::kCloseEvent;
     }
 
     return revents;

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 namespace dbase::net
 {
@@ -17,6 +18,8 @@ class Channel
         static constexpr std::uint32_t kNoneEvent = 0;
         static constexpr std::uint32_t kReadEvent = 1u << 0;
         static constexpr std::uint32_t kWriteEvent = 1u << 1;
+        static constexpr std::uint32_t kErrorEvent = 1u << 2;
+        static constexpr std::uint32_t kCloseEvent = 1u << 3;
 
         Channel(EventLoop* loop, SocketType fd);
 
@@ -34,8 +37,11 @@ class Channel
         void setCloseCallback(EventCallback cb);
         void setErrorCallback(EventCallback cb);
 
+        void tie(const std::shared_ptr<void>& obj);
+
         void enableReading();
         void enableWriting();
+        void disableReading();
         void disableWriting();
         void disableAll();
 
@@ -47,6 +53,7 @@ class Channel
 
     private:
         void update();
+        void handleEventWithGuard();
 
     private:
         EventLoop* m_loop{nullptr};
@@ -58,5 +65,8 @@ class Channel
         EventCallback m_writeCallback;
         EventCallback m_closeCallback;
         EventCallback m_errorCallback;
+
+        std::weak_ptr<void> m_tie;
+        bool m_tied{false};
 };
 }  // namespace dbase::net
