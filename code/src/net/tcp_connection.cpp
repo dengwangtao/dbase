@@ -206,6 +206,16 @@ std::size_t TcpConnection::readResumeLowWaterMark() const noexcept
     return m_readResumeLowWaterMark;
 }
 
+bool TcpConnection::edgeTriggered() const noexcept
+{
+    return m_edgeTriggered;
+}
+
+void TcpConnection::setEdgeTriggered(bool on) noexcept
+{
+    m_edgeTriggered = on;
+}
+
 void TcpConnection::setConnectionCallback(ConnectionCallback cb)
 {
     m_connectionCallback = std::move(cb);
@@ -378,6 +388,12 @@ void TcpConnection::connectEstablished()
     m_connectedAtTick.store(tick, std::memory_order_release);
     m_lastActiveAtTick.store(tick, std::memory_order_release);
     m_lastProbeAtTick.store(0, std::memory_order_release);
+
+#if defined(__linux__)
+    m_channel->setEdgeTriggered(m_edgeTriggered);
+#else
+    m_channel->setEdgeTriggered(false);
+#endif
 
     m_channel->tie(shared_from_this());
     m_channel->enableReading();

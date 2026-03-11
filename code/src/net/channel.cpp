@@ -47,6 +47,25 @@ bool Channel::isNoneEvent() const noexcept
     return m_events == kNoneEvent;
 }
 
+bool Channel::edgeTriggered() const noexcept
+{
+    return m_edgeTriggered;
+}
+
+void Channel::setEdgeTriggered(bool on)
+{
+    if (m_edgeTriggered == on)
+    {
+        return;
+    }
+
+    m_edgeTriggered = on;
+    if (!isNoneEvent())
+    {
+        update();
+    }
+}
+
 void Channel::setRevents(std::uint32_t revents) noexcept
 {
     m_revents = revents;

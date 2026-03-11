@@ -145,6 +145,21 @@ void TcpServer::disableAutoReadFlowControl() noexcept
     m_readResumeLowWaterMark = 0;
 }
 
+void TcpServer::enableEdgeTriggered(bool on) noexcept
+{
+#if defined(__linux__)
+    m_edgeTriggered = on;
+#else
+    m_edgeTriggered = false;
+    (void)on;
+#endif
+}
+
+bool TcpServer::edgeTriggered() const noexcept
+{
+    return m_edgeTriggered;
+}
+
 void TcpServer::setIdleTimeout(std::chrono::milliseconds timeout) noexcept
 {
     m_idleTimeout = timeout;
@@ -257,6 +272,7 @@ void TcpServer::newConnection(Socket socket, const InetAddress& peerAddr)
     conn->setLengthFieldCodec(m_codec);
     conn->setMaxOutputBufferBytes(m_maxOutputBufferBytes);
     conn->setOutputOverflowPolicy(m_outputOverflowPolicy);
+    conn->setEdgeTriggered(m_edgeTriggered);
 
     if (m_autoReadFlowControlEnabled)
     {

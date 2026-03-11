@@ -96,6 +96,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] std::size_t readPauseHighWaterMark() const noexcept;
         [[nodiscard]] std::size_t readResumeLowWaterMark() const noexcept;
 
+        [[nodiscard]] bool edgeTriggered() const noexcept;
+        void setEdgeTriggered(bool on) noexcept;
+
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
@@ -188,6 +191,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         std::size_t m_readPauseHighWaterMark{0};
         std::size_t m_readResumeLowWaterMark{0};
         bool m_readPausedByFlowControl{false};
+
+        bool m_edgeTriggered{false};
 
         std::atomic<std::int64_t> m_connectedAtTick{0};
         std::atomic<std::int64_t> m_lastActiveAtTick{0};

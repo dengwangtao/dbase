@@ -30,6 +30,9 @@ class Channel
         [[nodiscard]] std::uint32_t revents() const noexcept;
         [[nodiscard]] bool isNoneEvent() const noexcept;
 
+        [[nodiscard]] bool edgeTriggered() const noexcept;
+        void setEdgeTriggered(bool on);
+
         void setRevents(std::uint32_t revents) noexcept;
 
         void setReadCallback(EventCallback cb);
@@ -60,6 +63,7 @@ class Channel
         SocketType m_fd{kInvalidSocket};
         std::uint32_t m_events{kNoneEvent};
         std::uint32_t m_revents{kNoneEvent};
+        bool m_edgeTriggered{false};
 
         EventCallback m_readCallback;
         EventCallback m_writeCallback;

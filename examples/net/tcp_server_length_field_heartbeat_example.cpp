@@ -36,6 +36,7 @@ int main()
         server.setLengthFieldCodec(codec);
         server.setHeartbeatInterval(std::chrono::seconds(5));
         server.setIdleTimeout(std::chrono::seconds(15));
+        server.enableEdgeTriggered(true);
 
         server.setThreadInitCallback([]()
                                      { DBASE_LOG_INFO("io loop init, tid={}", dbase::thread::current_thread::tid()); });

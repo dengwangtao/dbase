@@ -58,6 +58,9 @@ class TcpServer
         void enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept;
         void disableAutoReadFlowControl() noexcept;
 
+        void enableEdgeTriggered(bool on) noexcept;
+        [[nodiscard]] bool edgeTriggered() const noexcept;
+
         void setIdleTimeout(std::chrono::milliseconds timeout) noexcept;
         [[nodiscard]] std::chrono::milliseconds idleTimeout() const noexcept;
 
@@ -96,6 +99,8 @@ class TcpServer
         bool m_autoReadFlowControlEnabled{false};
         std::size_t m_readPauseHighWaterMark{0};
         std::size_t m_readResumeLowWaterMark{0};
+
+        bool m_edgeTriggered{false};
 
         std::chrono::milliseconds m_idleTimeout{0};
         std::chrono::milliseconds m_heartbeatInterval{0};

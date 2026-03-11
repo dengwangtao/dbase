@@ -161,6 +161,11 @@ std::uint32_t EpollPoller::toEpollEvents(Channel* channel) noexcept
         events |= static_cast<std::uint32_t>(EPOLLOUT);
     }
 
+    if (channel->edgeTriggered())
+    {
+        events |= static_cast<std::uint32_t>(EPOLLET);
+    }
+
     return events;
 }
 
@@ -168,7 +173,7 @@ std::uint32_t EpollPoller::fromEpollEvents(std::uint32_t epollEvents) noexcept
 {
     std::uint32_t revents = Channel::kNoneEvent;
 
-    if ((epollEvents & (EPOLLERR)) != 0)
+    if ((epollEvents & EPOLLERR) != 0)
     {
         revents |= Channel::kErrorEvent;
     }
