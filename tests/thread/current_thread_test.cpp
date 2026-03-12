@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #include "dbase/thread/current_thread.h"
@@ -34,7 +35,7 @@ TEST_CASE("current_thread setName updates current thread local name", "[thread][
     current_thread::setName("dbase-main-test");
 
 #if defined(__linux__) || defined(__APPLE__)
-    REQUIRE(current_thread::name() == "dbase-main-test".substr(0, 15));
+    REQUIRE(current_thread::name() == std::string_view("dbase-main-test").substr(0, 15));
 #else
     REQUIRE(current_thread::name() == "dbase-main-test");
 #endif

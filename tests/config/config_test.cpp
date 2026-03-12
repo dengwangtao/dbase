@@ -45,7 +45,7 @@ TEST_CASE("Config set and has work for string value", "[config][config]")
 TEST_CASE("Config get returns stored ConfigValue", "[config][config]")
 {
     TestConfig config;
-    config.set("port", ConfigValue(9527ll));
+    config.set("port", ConfigValue(std::int64_t(9527)));
 
     const auto value = config.get("port");
 
@@ -78,7 +78,7 @@ TEST_CASE("Config getString returns stored string", "[config][config]")
 TEST_CASE("Config getString returns type error on non string value", "[config][config]")
 {
     TestConfig config;
-    config.set("port", ConfigValue(8080ll));
+    config.set("port", ConfigValue(std::int64_t(8080)));
 
     const auto value = config.getString("port");
 
@@ -89,7 +89,7 @@ TEST_CASE("Config getString returns type error on non string value", "[config][c
 TEST_CASE("Config getInt returns stored integer", "[config][config]")
 {
     TestConfig config;
-    config.set("workers", ConfigValue(8ll));
+    config.set("workers", ConfigValue(std::int64_t(8)));
 
     const auto value = config.getInt("workers");
 
@@ -133,7 +133,7 @@ TEST_CASE("Config getOr helpers return stored value when key exists", "[config][
 {
     TestConfig config;
     config.set("name", ConfigValue(std::string("demo")));
-    config.set("workers", ConfigValue(16ll));
+    config.set("workers", ConfigValue(std::int64_t(16)));
     config.set("ratio", ConfigValue(2.5));
     config.set("enabled", ConfigValue(true));
 
@@ -167,8 +167,8 @@ TEST_CASE("Config require returns NotFound for missing key", "[config][config]")
 TEST_CASE("Config set overwrites existing key", "[config][config]")
 {
     TestConfig config;
-    config.set("workers", ConfigValue(4ll));
-    config.set("workers", ConfigValue(8ll));
+    config.set("workers", ConfigValue(std::int64_t(4)));
+    config.set("workers", ConfigValue(std::int64_t(8)));
 
     const auto value = config.getInt("workers");
 
@@ -180,7 +180,7 @@ TEST_CASE("Config values exposes all inserted keys", "[config][config]")
 {
     TestConfig config;
     config.set("name", ConfigValue(std::string("demo")));
-    config.set("workers", ConfigValue(8ll));
+    config.set("workers", ConfigValue(std::int64_t(8)));
 
     const auto& values = config.values();
 
