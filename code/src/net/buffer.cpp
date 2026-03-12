@@ -28,17 +28,29 @@ template <>
     return static_cast<std::uint16_t>((value << 8) | (value >> 8));
 }
 
+// clang-format off
 template <>
 [[nodiscard]] std::uint32_t byteswapValue(std::uint32_t value) noexcept
 {
-    return ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) | ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
+    return ((value & 0x000000FFu) << 24) |
+           ((value & 0x0000FF00u) << 8) |
+           ((value & 0x00FF0000u) >> 8) |
+           ((value & 0xFF000000u) >> 24);
 }
 
 template <>
 [[nodiscard]] std::uint64_t byteswapValue(std::uint64_t value) noexcept
 {
-    return ((value & 0x00000000000000FFull) << 56) | ((value & 0x000000000000FF00ull) << 40) | ((value & 0x0000000000FF0000ull) << 24) | ((value & 0x00000000FF000000ull) << 8) | ((value & 0x000000FF00000000ull) >> 8) | ((value & 0x0000FF0000000000ull) >> 24) | ((value & 0x00FF000000000000ull) >> 40) | ((value & 0xFF00000000000000ull) >> 56);
+    return ((value & 0x00000000000000FFull) << 56) |
+           ((value & 0x000000000000FF00ull) << 40) |
+           ((value & 0x0000000000FF0000ull) << 24) |
+           ((value & 0x00000000FF000000ull) << 8) |
+           ((value & 0x000000FF00000000ull) >> 8) |
+           ((value & 0x0000FF0000000000ull) >> 24) |
+           ((value & 0x00FF000000000000ull) >> 40) |
+           ((value & 0xFF00000000000000ull) >> 56);
 }
+// clang-format on
 
 template <typename T>
 [[nodiscard]] T hostToBigEndian(T value) noexcept
@@ -576,13 +588,11 @@ dbase::Result<Buffer::IoResult> Buffer::readFdResult(SocketType fd)
 #else
     char extrabuf[64 * 1024];
     iovec vec[2];
-
     const std::size_t writable = writableBytes();
     vec[0].iov_base = beginWrite();
     vec[0].iov_len = writable;
     vec[1].iov_base = extrabuf;
     vec[1].iov_len = sizeof(extrabuf);
-
     const int iovcnt = writable < sizeof(extrabuf) ? 2 : 1;
     const ssize_t n = ::readv(fd, vec, iovcnt);
 
@@ -597,7 +607,6 @@ dbase::Result<Buffer::IoResult> Buffer::readFdResult(SocketType fd)
             hasWritten(writable);
             append(extrabuf, static_cast<std::size_t>(n) - writable);
         }
-
         return IoResult{static_cast<std::size_t>(n), IoResult::Status::Ok};
     }
 
@@ -707,7 +716,6 @@ void Buffer::makeSpace(std::size_t len)
     {
         m_readerIndex = kCheapPrepend;
         m_writerIndex = kCheapPrepend;
-
         if (writableBytes() >= len)
         {
             return;

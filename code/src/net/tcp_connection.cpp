@@ -1,7 +1,5 @@
 #include "dbase/net/tcp_connection.h"
-
 #include "dbase/net/socket_ops.h"
-
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -166,7 +164,6 @@ std::chrono::milliseconds TcpConnection::idleFor() const noexcept
     {
         return std::chrono::milliseconds(0);
     }
-
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - fromTick(tick));
 }
 
@@ -177,7 +174,6 @@ std::chrono::milliseconds TcpConnection::probeIdleFor() const noexcept
     {
         return std::chrono::milliseconds(0);
     }
-
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - fromTick(tick));
 }
 
@@ -375,14 +371,12 @@ void TcpConnection::clearContext() noexcept
 void TcpConnection::connectEstablished()
 {
     m_loop->assertInLoopThread();
-
     if (m_state != State::Connecting)
     {
         throw std::logic_error("TcpConnection::connectEstablished invalid state");
     }
 
     setState(State::Connected);
-
     const auto now = Clock::now();
     const auto tick = toTick(now);
     m_connectedAtTick.store(tick, std::memory_order_release);
@@ -407,11 +401,9 @@ void TcpConnection::connectEstablished()
 void TcpConnection::connectDestroyed()
 {
     m_loop->assertInLoopThread();
-
     if (m_state != State::Disconnected)
     {
         setState(State::Disconnected);
-
         if (m_connectionCallback)
         {
             m_connectionCallback(shared_from_this());
@@ -458,9 +450,9 @@ void TcpConnection::sendFrame(std::string_view payload)
         return;
     }
 
-    Buffer frame;
-    m_codec->encode(payload, frame);
-    send(frame);
+    Buffer buffer;
+    m_codec->encode(payload, buffer);
+    send(buffer);
 }
 
 void TcpConnection::shutdown()
@@ -471,14 +463,13 @@ void TcpConnection::shutdown()
     }
 
     setState(State::Disconnecting);
-
-    auto self = shared_from_this();
     if (m_loop->isInLoopThread())
     {
         shutdownInLoop();
         return;
     }
 
+    auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         { self->shutdownInLoop(); });
 }
@@ -490,13 +481,13 @@ void TcpConnection::forceClose()
         return;
     }
 
-    auto self = shared_from_this();
     if (m_loop->isInLoopThread())
     {
         forceCloseInLoop();
         return;
     }
 
+    auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         { self->forceCloseInLoop(); });
 }
@@ -513,18 +504,16 @@ std::int64_t TcpConnection::toTick(TimePoint tp) noexcept
 
 TcpConnection::TimePoint TcpConnection::fromTick(std::int64_t tick) noexcept
 {
-    if (tick == 0)
+    if (tick <= 0)
     {
         return TimePoint{};
     }
-
     return TimePoint(std::chrono::microseconds(tick));
 }
 
 void TcpConnection::sendInLoop(std::string data)
 {
     m_loop->assertInLoopThread();
-
     if (m_state == State::Disconnected || data.empty())
     {
         return;
@@ -565,7 +554,11 @@ void TcpConnection::sendInLoop(std::string data)
             return;
         }
 
-        handleError();
+        if (m_errorCallback)
+        {
+            m_errorCallback(shared_from_this(), err);
+        }
+        handleClose();
         return;
     }
 
@@ -578,14 +571,12 @@ void TcpConnection::sendInLoop(std::string data)
     {
         m_channel->enableWriting();
     }
-
     maybePauseReadForFlowControl();
 }
 
 void TcpConnection::shutdownInLoop()
 {
     m_loop->assertInLoopThread();
-
     if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
     {
         m_socket.shutdownWrite();
@@ -595,12 +586,10 @@ void TcpConnection::shutdownInLoop()
 void TcpConnection::forceCloseInLoop()
 {
     m_loop->assertInLoopThread();
-
     if (m_state == State::Disconnected)
     {
         return;
     }
-
     handleClose();
 }
 
@@ -610,50 +599,44 @@ void TcpConnection::handleRead()
 
     for (;;)
     {
-        const std::size_t n = m_inputBuffer.readFd(m_socket.fd());
-        if (n > 0)
+        auto ret = m_inputBuffer.readFdResult(m_socket.fd());
+        if (!ret)
         {
-            touchActive();
-
-            if (m_codec && m_frameMessageCallback)
-            {
-                handleCodecMessages();
-            }
-            else if (m_messageCallback)
-            {
-                m_messageCallback(shared_from_this(), m_inputBuffer);
-            }
-
-            continue;
-        }
-
-        const int err = lastSocketErrorCode();
-        if (isWouldBlockError(err))
-        {
-            break;
-        }
-
-        if (isConnectionResetError(err))
-        {
-            handleClose();
+            handleError();
             return;
         }
 
-        if (err == 0)
+        const auto& io = ret.value();
+        switch (io.status)
         {
-            handleClose();
-            return;
-        }
+            case Buffer::IoResult::Status::Ok:
+                touchActive();
+                if (m_codec && m_frameMessageCallback)
+                {
+                    handleCodecMessages();
+                }
+                else if (m_messageCallback)
+                {
+                    m_messageCallback(shared_from_this(), m_inputBuffer);
+                }
+                continue;
 
-        handleError();
-        return;
+            case Buffer::IoResult::Status::WouldBlock:
+                return;
+
+            case Buffer::IoResult::Status::EndOfFile:
+                handleClose();
+                return;
+
+            case Buffer::IoResult::Status::Empty:
+                return;
+        }
     }
 }
 
 void TcpConnection::handleWrite()
 {
     m_loop->assertInLoopThread();
-
     if (!m_channel->isWriting())
     {
         return;
@@ -661,20 +644,35 @@ void TcpConnection::handleWrite()
 
     while (m_outputBuffer.readableBytes() > 0)
     {
-        const std::size_t n = m_outputBuffer.writeFd(m_socket.fd());
-        if (n > 0)
+        auto ret = m_outputBuffer.writeFdResult(m_socket.fd());
+        if (!ret)
         {
-            maybeResumeReadForFlowControl();
-            continue;
-        }
-
-        const int err = lastSocketErrorCode();
-        if (isWouldBlockError(err))
-        {
+            handleError();
             return;
         }
 
-        handleError();
+        const auto& io = ret.value();
+        switch (io.status)
+        {
+            case Buffer::IoResult::Status::Ok:
+                maybeResumeReadForFlowControl();
+                continue;
+
+            case Buffer::IoResult::Status::WouldBlock:
+                return;
+
+            case Buffer::IoResult::Status::EndOfFile:
+                handleClose();
+                return;
+
+            case Buffer::IoResult::Status::Empty:
+                break;
+        }
+        break;
+    }
+
+    if (m_outputBuffer.readableBytes() > 0)
+    {
         return;
     }
 
@@ -695,7 +693,6 @@ void TcpConnection::handleWrite()
 void TcpConnection::handleClose()
 {
     m_loop->assertInLoopThread();
-
     if (m_state == State::Disconnected)
     {
         return;
@@ -703,7 +700,6 @@ void TcpConnection::handleClose()
 
     setState(State::Disconnected);
     m_channel->disableAll();
-
     auto self = shared_from_this();
 
     if (m_connectionCallback)
@@ -720,7 +716,6 @@ void TcpConnection::handleClose()
 void TcpConnection::handleError()
 {
     m_loop->assertInLoopThread();
-
     const int err = SocketOps::getSocketError(m_socket.fd());
     if (m_errorCallback)
     {
@@ -733,7 +728,6 @@ void TcpConnection::handleCodecMessages()
     for (;;)
     {
         auto result = m_codec->tryDecode(m_inputBuffer);
-
         if (result.status == LengthFieldCodec::DecodeStatus::NeedMoreData)
         {
             break;
@@ -745,7 +739,6 @@ void TcpConnection::handleCodecMessages()
             {
                 m_errorCallback(shared_from_this(), kCodecError);
             }
-
             handleClose();
             break;
         }
@@ -758,7 +751,6 @@ bool TcpConnection::handleOutputBufferAppend(std::string_view data)
 {
     const std::size_t oldBytes = m_outputBuffer.readableBytes();
     const std::size_t newBytes = oldBytes + data.size();
-
     if (newBytes > m_maxOutputBufferBytes)
     {
         handleOutputOverflow();
@@ -766,12 +758,10 @@ bool TcpConnection::handleOutputBufferAppend(std::string_view data)
     }
 
     m_outputBuffer.append(data);
-
     if (m_highWaterMarkCallback && oldBytes < m_maxOutputBufferBytes && newBytes >= m_maxOutputBufferBytes)
     {
         notifyHighWaterMark(newBytes);
     }
-
     return true;
 }
 
@@ -819,17 +809,14 @@ void TcpConnection::maybePauseReadForFlowControl()
     {
         return;
     }
-
     if (m_readPausedByFlowControl)
     {
         return;
     }
-
     if (m_outputBuffer.readableBytes() < m_readPauseHighWaterMark)
     {
         return;
     }
-
     if (m_channel->isReading())
     {
         m_channel->disableReading();
@@ -843,17 +830,14 @@ void TcpConnection::maybeResumeReadForFlowControl()
     {
         return;
     }
-
     if (!m_readPausedByFlowControl)
     {
         return;
     }
-
     if (m_outputBuffer.readableBytes() > m_readResumeLowWaterMark)
     {
         return;
     }
-
     if (!m_channel->isReading())
     {
         m_channel->enableReading();
@@ -865,5 +849,4 @@ void TcpConnection::setState(State state) noexcept
 {
     m_state = state;
 }
-
 }  // namespace dbase::net
