@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dbase/error/error.h"
 #include "dbase/net/socket_ops.h"
 
 #include <cstddef>
@@ -13,6 +14,26 @@ namespace dbase::net
 {
 class Buffer
 {
+    public:
+        struct IoResult
+        {
+                enum class Status
+                {
+                    Ok,
+                    WouldBlock,
+                    EndOfFile,
+                    Empty
+                };
+
+                std::size_t bytes{0};
+                Status status{Status::Ok};
+
+                [[nodiscard]] bool hasBytes() const noexcept
+                {
+                    return status == Status::Ok && bytes > 0;
+                }
+        };
+
     public:
         static constexpr std::size_t kCheapPrepend = 8;
         static constexpr std::size_t kInitialSize = 1024;
@@ -95,6 +116,9 @@ class Buffer
         void prependUInt16(std::uint16_t value);
         void prependUInt32(std::uint32_t value);
         void prependUInt64(std::uint64_t value);
+
+        [[nodiscard]] dbase::Result<IoResult> readFdResult(SocketType fd);
+        [[nodiscard]] dbase::Result<IoResult> writeFdResult(SocketType fd);
 
         [[nodiscard]] std::size_t readFd(SocketType fd);
         [[nodiscard]] std::size_t writeFd(SocketType fd);

@@ -1,5 +1,4 @@
 #pragma once
-
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -23,6 +22,8 @@ enum class ErrorCode
     ParseError,
     InvalidState,
     Cancelled,
+    WouldBlock,
+    EndOfFile,
     Unknown
 };
 
@@ -74,7 +75,6 @@ class BadResultAccess : public std::logic_error
 };
 
 [[nodiscard]] const char* toString(ErrorCode code) noexcept;
-
 [[nodiscard]] int lastSystemErrorCode() noexcept;
 [[nodiscard]] std::string systemErrorMessage(int code);
 [[nodiscard]] Error makeSystemError(std::string message, int code = lastSystemErrorCode());
@@ -298,5 +298,4 @@ template <typename T>
 {
     return Result<T>(makeSystemError(std::move(message), code));
 }
-
 }  // namespace dbase

@@ -1,5 +1,4 @@
 #include "dbase/net/buffer.h"
-
 #include <algorithm>
 #include <bit>
 #include <cassert>
@@ -8,7 +7,10 @@
 #include <type_traits>
 #include <vector>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <WinSock2.h>
+#else
+#include <cerrno>
 #include <sys/uio.h>
 #include <unistd.h>
 #endif
@@ -26,29 +28,17 @@ template <>
     return static_cast<std::uint16_t>((value << 8) | (value >> 8));
 }
 
-// clang-format off
 template <>
 [[nodiscard]] std::uint32_t byteswapValue(std::uint32_t value) noexcept
 {
-    return ((value & 0x000000FFu) << 24) |
-           ((value & 0x0000FF00u) << 8) |
-           ((value & 0x00FF0000u) >> 8) |
-           ((value & 0xFF000000u) >> 24);
+    return ((value & 0x000000FFu) << 24) | ((value & 0x0000FF00u) << 8) | ((value & 0x00FF0000u) >> 8) | ((value & 0xFF000000u) >> 24);
 }
 
 template <>
 [[nodiscard]] std::uint64_t byteswapValue(std::uint64_t value) noexcept
 {
-    return ((value & 0x00000000000000FFull) << 56) |
-           ((value & 0x000000000000FF00ull) << 40) |
-           ((value & 0x0000000000FF0000ull) << 24) |
-           ((value & 0x00000000FF000000ull) << 8) |
-           ((value & 0x000000FF00000000ull) >> 8) |
-           ((value & 0x0000FF0000000000ull) >> 24) |
-           ((value & 0x00FF000000000000ull) >> 40) |
-           ((value & 0xFF00000000000000ull) >> 56);
+    return ((value & 0x00000000000000FFull) << 56) | ((value & 0x000000000000FF00ull) << 40) | ((value & 0x0000000000FF0000ull) << 24) | ((value & 0x00000000FF000000ull) << 8) | ((value & 0x000000FF00000000ull) >> 8) | ((value & 0x0000FF0000000000ull) >> 24) | ((value & 0x00FF000000000000ull) >> 40) | ((value & 0xFF00000000000000ull) >> 56);
 }
-// clang-format on
 
 template <typename T>
 [[nodiscard]] T hostToBigEndian(T value) noexcept
@@ -101,6 +91,15 @@ void writeInteger(char* data, T value)
 {
     const T be = hostToBigEndian(value);
     std::memcpy(data, &be, sizeof(T));
+}
+
+[[nodiscard]] bool isWouldBlockError(int err) noexcept
+{
+#if defined(_WIN32)
+    return err == WSAEWOULDBLOCK;
+#else
+    return err == EAGAIN || err == EWOULDBLOCK;
+#endif
 }
 }  // namespace
 
@@ -192,7 +191,6 @@ std::string Buffer::retrieveAsString(std::size_t len)
     {
         throw std::out_of_range("Buffer::retrieveAsString len out of range");
     }
-
     std::string result(peek(), len);
     retrieve(len);
     return result;
@@ -248,7 +246,6 @@ void Buffer::append(const void* data, std::size_t len)
     {
         return;
     }
-
     ensureWritableBytes(len);
     std::memcpy(beginWrite(), data, len);
     hasWritten(len);
@@ -260,7 +257,6 @@ void Buffer::append(const char* data)
     {
         return;
     }
-
     append(data, std::strlen(data));
 }
 
@@ -290,12 +286,10 @@ void Buffer::prepend(const void* data, std::size_t len)
     {
         return;
     }
-
     if (len > prependableBytes())
     {
         throw std::out_of_range("Buffer::prepend not enough prependable bytes");
     }
-
     m_readerIndex -= len;
     std::memcpy(begin() + m_readerIndex, data, len);
 }
@@ -311,7 +305,6 @@ std::int8_t Buffer::peekInt8() const
     {
         throw std::out_of_range("Buffer::peekInt8 not enough readable bytes");
     }
-
     return *reinterpret_cast<const std::int8_t*>(peek());
 }
 
@@ -321,7 +314,6 @@ std::int16_t Buffer::peekInt16() const
     {
         throw std::out_of_range("Buffer::peekInt16 not enough readable bytes");
     }
-
     return readInteger<std::int16_t>(peek());
 }
 
@@ -331,7 +323,6 @@ std::int32_t Buffer::peekInt32() const
     {
         throw std::out_of_range("Buffer::peekInt32 not enough readable bytes");
     }
-
     return readInteger<std::int32_t>(peek());
 }
 
@@ -341,7 +332,6 @@ std::int64_t Buffer::peekInt64() const
     {
         throw std::out_of_range("Buffer::peekInt64 not enough readable bytes");
     }
-
     return readInteger<std::int64_t>(peek());
 }
 
@@ -351,7 +341,6 @@ std::uint8_t Buffer::peekUInt8() const
     {
         throw std::out_of_range("Buffer::peekUInt8 not enough readable bytes");
     }
-
     return *reinterpret_cast<const std::uint8_t*>(peek());
 }
 
@@ -361,7 +350,6 @@ std::uint16_t Buffer::peekUInt16() const
     {
         throw std::out_of_range("Buffer::peekUInt16 not enough readable bytes");
     }
-
     return readInteger<std::uint16_t>(peek());
 }
 
@@ -371,7 +359,6 @@ std::uint32_t Buffer::peekUInt32() const
     {
         throw std::out_of_range("Buffer::peekUInt32 not enough readable bytes");
     }
-
     return readInteger<std::uint32_t>(peek());
 }
 
@@ -381,7 +368,6 @@ std::uint64_t Buffer::peekUInt64() const
     {
         throw std::out_of_range("Buffer::peekUInt64 not enough readable bytes");
     }
-
     return readInteger<std::uint64_t>(peek());
 }
 
@@ -504,7 +490,6 @@ void Buffer::prependInt16(std::int16_t value)
     {
         throw std::out_of_range("Buffer::prependInt16 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
@@ -515,7 +500,6 @@ void Buffer::prependInt32(std::int32_t value)
     {
         throw std::out_of_range("Buffer::prependInt32 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
@@ -526,7 +510,6 @@ void Buffer::prependInt64(std::int64_t value)
     {
         throw std::out_of_range("Buffer::prependInt64 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
@@ -542,7 +525,6 @@ void Buffer::prependUInt16(std::uint16_t value)
     {
         throw std::out_of_range("Buffer::prependUInt16 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
@@ -553,7 +535,6 @@ void Buffer::prependUInt32(std::uint32_t value)
     {
         throw std::out_of_range("Buffer::prependUInt32 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
@@ -564,22 +545,34 @@ void Buffer::prependUInt64(std::uint64_t value)
     {
         throw std::out_of_range("Buffer::prependUInt64 not enough prependable bytes");
     }
-
     m_readerIndex -= sizeof(value);
     writeInteger(begin() + m_readerIndex, value);
 }
 
-std::size_t Buffer::readFd(SocketType fd)
+dbase::Result<Buffer::IoResult> Buffer::readFdResult(SocketType fd)
 {
 #if defined(_WIN32)
     ensureWritableBytes(64 * 1024);
     const int n = SocketOps::read(fd, beginWrite(), writableBytes());
+
     if (n > 0)
     {
         hasWritten(static_cast<std::size_t>(n));
-        return static_cast<std::size_t>(n);
+        return IoResult{static_cast<std::size_t>(n), IoResult::Status::Ok};
     }
-    return 0;
+
+    if (n == 0)
+    {
+        return IoResult{0, IoResult::Status::EndOfFile};
+    }
+
+    const int err = WSAGetLastError();
+    if (isWouldBlockError(err))
+    {
+        return IoResult{0, IoResult::Status::WouldBlock};
+    }
+
+    return dbase::makeSystemErrorResultT<IoResult>("Buffer::readFdResult failed", err);
 #else
     char extrabuf[64 * 1024];
     iovec vec[2];
@@ -593,40 +586,88 @@ std::size_t Buffer::readFd(SocketType fd)
     const int iovcnt = writable < sizeof(extrabuf) ? 2 : 1;
     const ssize_t n = ::readv(fd, vec, iovcnt);
 
-    if (n <= 0)
+    if (n > 0)
+    {
+        if (static_cast<std::size_t>(n) <= writable)
+        {
+            hasWritten(static_cast<std::size_t>(n));
+        }
+        else
+        {
+            hasWritten(writable);
+            append(extrabuf, static_cast<std::size_t>(n) - writable);
+        }
+
+        return IoResult{static_cast<std::size_t>(n), IoResult::Status::Ok};
+    }
+
+    if (n == 0)
+    {
+        return IoResult{0, IoResult::Status::EndOfFile};
+    }
+
+    const int err = errno;
+    if (isWouldBlockError(err))
+    {
+        return IoResult{0, IoResult::Status::WouldBlock};
+    }
+
+    return dbase::makeSystemErrorResultT<IoResult>("Buffer::readFdResult failed", err);
+#endif
+}
+
+dbase::Result<Buffer::IoResult> Buffer::writeFdResult(SocketType fd)
+{
+    const std::size_t readable = readableBytes();
+    if (readable == 0)
+    {
+        return IoResult{0, IoResult::Status::Empty};
+    }
+
+    const int n = SocketOps::write(fd, peek(), readable);
+    if (n > 0)
+    {
+        retrieve(static_cast<std::size_t>(n));
+        return IoResult{static_cast<std::size_t>(n), IoResult::Status::Ok};
+    }
+
+    if (n == 0)
+    {
+        return IoResult{0, IoResult::Status::EndOfFile};
+    }
+
+#if defined(_WIN32)
+    const int err = WSAGetLastError();
+#else
+    const int err = errno;
+#endif
+
+    if (isWouldBlockError(err))
+    {
+        return IoResult{0, IoResult::Status::WouldBlock};
+    }
+
+    return dbase::makeSystemErrorResultT<IoResult>("Buffer::writeFdResult failed", err);
+}
+
+std::size_t Buffer::readFd(SocketType fd)
+{
+    const auto ret = readFdResult(fd);
+    if (!ret)
     {
         return 0;
     }
-
-    if (static_cast<std::size_t>(n) <= writable)
-    {
-        hasWritten(static_cast<std::size_t>(n));
-    }
-    else
-    {
-        hasWritten(writable);
-        append(extrabuf, static_cast<std::size_t>(n) - writable);
-    }
-
-    return static_cast<std::size_t>(n);
-#endif
+    return ret->status == IoResult::Status::Ok ? ret->bytes : 0;
 }
 
 std::size_t Buffer::writeFd(SocketType fd)
 {
-    if (readableBytes() == 0)
+    const auto ret = writeFdResult(fd);
+    if (!ret)
     {
         return 0;
     }
-
-    const int n = SocketOps::write(fd, peek(), readableBytes());
-    if (n > 0)
-    {
-        retrieve(static_cast<std::size_t>(n));
-        return static_cast<std::size_t>(n);
-    }
-
-    return 0;
+    return ret->status == IoResult::Status::Ok ? ret->bytes : 0;
 }
 
 void Buffer::shrink(std::size_t reserve)
@@ -690,5 +731,4 @@ void Buffer::makeSpace(std::size_t len)
     m_readerIndex = kCheapPrepend;
     m_writerIndex = m_readerIndex + readable;
 }
-
 }  // namespace dbase::net

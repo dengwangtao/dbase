@@ -1,5 +1,4 @@
 #include "dbase/error/error.h"
-
 #include <cstring>
 #include <string>
 
@@ -37,6 +36,10 @@ const char* toString(ErrorCode code) noexcept
             return "InvalidState";
         case ErrorCode::Cancelled:
             return "Cancelled";
+        case ErrorCode::WouldBlock:
+            return "WouldBlock";
+        case ErrorCode::EndOfFile:
+            return "EndOfFile";
         case ErrorCode::Unknown:
             return "Unknown";
         default:
@@ -50,7 +53,6 @@ std::string Error::toString() const
     {
         return std::string(dbase::toString(m_code));
     }
-
     return std::string(dbase::toString(m_code)) + ": " + m_message;
 }
 
@@ -81,7 +83,6 @@ std::string systemErrorMessage(int code)
     {
         message.assign(buffer, size);
         ::LocalFree(buffer);
-
         while (!message.empty() && (message.back() == '\r' || message.back() == '\n' || message.back() == ' '))
         {
             message.pop_back();
@@ -91,7 +92,6 @@ std::string systemErrorMessage(int code)
     {
         message = "unknown system error";
     }
-
     return message;
 #else
     return std::strerror(code);
@@ -104,10 +104,8 @@ Error makeSystemError(std::string message, int code)
     {
         message += ": ";
     }
-
     message += systemErrorMessage(code);
     message += " (code=" + std::to_string(code) + ")";
     return Error(ErrorCode::SystemError, std::move(message));
 }
-
 }  // namespace dbase
