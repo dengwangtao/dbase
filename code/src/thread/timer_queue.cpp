@@ -56,6 +56,7 @@ void TimerQueue::stop()
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        ++m_cancelGeneration;
         while (!m_tasks.empty())
         {
             m_tasks.pop();
@@ -106,11 +107,15 @@ TimerQueue::TimerId TimerQueue::runAt(TimePoint timePoint, Task task)
     }
 
     auto timerTask = std::make_shared<TimerTask>();
-    timerTask->id = ++m_nextId;
-    timerTask->expiration = timePoint;
-    timerTask->task = std::move(task);
-    timerTask->repeat = false;
-    timerTask->interval = Duration(0);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        timerTask->id = ++m_nextId;
+        timerTask->expiration = timePoint;
+        timerTask->task = std::move(task);
+        timerTask->repeat = false;
+        timerTask->interval = Duration(0);
+        timerTask->generation = m_cancelGeneration;
+    }
 
     pushTask(timerTask);
     return timerTask->id;
@@ -134,11 +139,15 @@ TimerQueue::TimerId TimerQueue::runEvery(Duration interval, Task task)
     }
 
     auto timerTask = std::make_shared<TimerTask>();
-    timerTask->id = ++m_nextId;
-    timerTask->expiration = Clock::now() + interval;
-    timerTask->interval = interval;
-    timerTask->task = std::move(task);
-    timerTask->repeat = true;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        timerTask->id = ++m_nextId;
+        timerTask->expiration = Clock::now() + interval;
+        timerTask->interval = interval;
+        timerTask->task = std::move(task);
+        timerTask->repeat = true;
+        timerTask->generation = m_cancelGeneration;
+    }
 
     pushTask(timerTask);
     return timerTask->id;
@@ -157,18 +166,10 @@ bool TimerQueue::cancel(TimerId timerId)
 
 void TimerQueue::cancelAll()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    std::priority_queue<
-            std::shared_ptr<TimerTask>,
-            std::vector<std::shared_ptr<TimerTask>>,
-            TimerTaskCompare>
-            copied = m_tasks;
-
-    while (!copied.empty())
     {
-        m_cancelled.emplace(copied.top()->id);
-        copied.pop();
+        std::lock_guard<std::mutex> lock(m_mutex);
+        ++m_cancelGeneration;
+        m_cancelled.clear();
     }
 
     m_cv.notify_all();
@@ -178,6 +179,11 @@ std::size_t TimerQueue::size() const noexcept
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_tasks.size();
+}
+
+bool TimerQueue::isCancelledLocked(const std::shared_ptr<TimerTask>& timerTask) const noexcept
+{
+    return timerTask->generation < m_cancelGeneration || m_cancelled.contains(timerTask->id);
 }
 
 void TimerQueue::workerLoop(std::stop_token stopToken)
@@ -201,7 +207,7 @@ void TimerQueue::workerLoop(std::stop_token stopToken)
             {
                 auto top = m_tasks.top();
 
-                if (m_cancelled.contains(top->id))
+                if (isCancelledLocked(top))
                 {
                     m_cancelled.erase(top->id);
                     m_tasks.pop();
@@ -235,7 +241,7 @@ void TimerQueue::workerLoop(std::stop_token stopToken)
 
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_cancelled.contains(timerTask->id))
+            if (isCancelledLocked(timerTask))
             {
                 m_cancelled.erase(timerTask->id);
                 continue;
@@ -249,7 +255,7 @@ void TimerQueue::workerLoop(std::stop_token stopToken)
             bool cancelled = false;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
-                if (m_cancelled.contains(timerTask->id))
+                if (isCancelledLocked(timerTask))
                 {
                     m_cancelled.erase(timerTask->id);
                     cancelled = true;

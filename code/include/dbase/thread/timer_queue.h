@@ -59,6 +59,7 @@ class TimerQueue
                 Duration interval{0};
                 Task task;
                 bool repeat{false};
+                std::uint64_t generation{0};
         };
 
         struct TimerTaskCompare
@@ -77,6 +78,7 @@ class TimerQueue
         void workerLoop(std::stop_token stopToken);
         void executeTask(const std::shared_ptr<TimerTask>& timerTask);
         void pushTask(std::shared_ptr<TimerTask> timerTask);
+        [[nodiscard]] bool isCancelledLocked(const std::shared_ptr<TimerTask>& timerTask) const noexcept;
 
     private:
         mutable std::mutex m_mutex;
@@ -90,6 +92,7 @@ class TimerQueue
         std::atomic<TimerId> m_nextId{0};
         std::atomic<bool> m_started{false};
         std::atomic<bool> m_stopped{true};
+        std::uint64_t m_cancelGeneration{0};
 
         ThreadPool* m_threadPool{nullptr};
         std::string m_threadName{"timer"};
