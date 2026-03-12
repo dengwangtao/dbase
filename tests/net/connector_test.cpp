@@ -368,6 +368,7 @@ TEST_CASE("Connector restart resets current retry delay to initial value", "[net
 
     connector->restart();
 
+    std::this_thread::sleep_for(20ms);
     REQUIRE(connector->started());
     REQUIRE(connector->initialRetryDelayMs() == 20);
     REQUIRE(connector->maxRetryDelayMs() == 80);
@@ -450,6 +451,7 @@ TEST_CASE("Connector restart can reconnect to a live server", "[net][connector]"
 
     connector->restart();
 
+    std::this_thread::sleep_for(20ms);
     REQUIRE(secondFuture.wait_for(1000ms) == std::future_status::ready);
     REQUIRE(callbackCount.load(std::memory_order_relaxed) == 2);
 }
