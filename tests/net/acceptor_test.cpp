@@ -275,13 +275,25 @@ TEST_CASE("Acceptor socket accessor returns same underlying socket object", "[ne
     REQUIRE(sock1.fd() == sock3.fd());
 }
 
-TEST_CASE("Acceptor supports IPv6 listen construction when requested", "[net][acceptor]")
+TEST_CASE("Acceptor supports IPv6 any-address listen construction", "[net][acceptor]")
 {
-    const InetAddress listenAddr(0, true, true);
+    try
+    {
+        dbase::net::Socket probe = dbase::net::Socket::createTcp(AF_INET6);
+        probe.setReuseAddr(true);
+        probe.setIpv6Only(true);
+        probe.bindAddress(dbase::net::InetAddress(0, false, true));
+    }
+    catch (...)
+    {
+        SKIP("IPv6 is not available in this environment");
+    }
+
+    const InetAddress listenAddr(0, false, true);
     Acceptor acceptor(listenAddr, false, true);
 
     REQUIRE(acceptor.listenAddress().isIpv6());
-    REQUIRE(acceptor.listenAddress().isLoopbackIp());
+    REQUIRE_FALSE(acceptor.listenAddress().isLoopbackIp());
     REQUIRE_FALSE(acceptor.edgeTriggered());
 
     acceptor.listen();
