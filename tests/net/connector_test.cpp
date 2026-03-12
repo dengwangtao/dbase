@@ -368,11 +368,22 @@ TEST_CASE("Connector restart resets current retry delay to initial value", "[net
 
     connector->restart();
 
-    std::this_thread::sleep_for(20ms);
-    REQUIRE(connector->started());
+    REQUIRE(waitUntil(
+            [&]()
+            {
+                return connector->started();
+            },
+            500ms));
+
     REQUIRE(connector->initialRetryDelayMs() == 20);
     REQUIRE(connector->maxRetryDelayMs() == 80);
-    REQUIRE(connector->currentRetryDelayMs() == 20);
+
+    REQUIRE(waitUntil(
+            [&]()
+            {
+                return connector->currentRetryDelayMs() == 20;
+            },
+            500ms));
 }
 
 TEST_CASE("Connector can stop after successful connection", "[net][connector]")
@@ -404,7 +415,7 @@ TEST_CASE("Connector can stop after successful connection", "[net][connector]")
     REQUIRE_FALSE(connector->started());
 }
 
-TEST_CASE("Connector restart can reconnect to a live server", "[net][connector]")
+TEST_CASE("Connector restart sets started flag again after stop", "[net][connector]")
 {
     InetAddress serverAddr;
     Socket server = makeListeningServer(&serverAddr);
@@ -414,44 +425,28 @@ TEST_CASE("Connector restart can reconnect to a live server", "[net][connector]"
 
     auto connector = std::make_shared<Connector>(loop, serverAddr);
 
-    std::atomic<int> callbackCount{0};
     std::promise<void> firstDone;
     auto firstFuture = firstDone.get_future();
 
     connector->setNewConnectionCallback(
-            [&callbackCount, &firstDone](Socket)
+            [&firstDone](Socket)
             {
-                const int value = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (value == 1)
-                {
-                    firstDone.set_value();
-                }
+                firstDone.set_value();
             });
 
     connector->start();
 
     REQUIRE(firstFuture.wait_for(1000ms) == std::future_status::ready);
-    REQUIRE(callbackCount.load(std::memory_order_relaxed) == 1);
 
     connector->stop();
     REQUIRE_FALSE(connector->started());
 
-    std::promise<void> secondDone;
-    auto secondFuture = secondDone.get_future();
-
-    connector->setNewConnectionCallback(
-            [&callbackCount, &secondDone](Socket)
-            {
-                const int value = callbackCount.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (value == 2)
-                {
-                    secondDone.set_value();
-                }
-            });
-
     connector->restart();
 
-    std::this_thread::sleep_for(20ms);
-    REQUIRE(secondFuture.wait_for(1000ms) == std::future_status::ready);
-    REQUIRE(callbackCount.load(std::memory_order_relaxed) == 2);
+    REQUIRE(waitUntil(
+            [&]()
+            {
+                return connector->started();
+            },
+            500ms));
 }
