@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <fstream>
 
 #include "dbase/net/inet_address.h"
 #include "dbase/net/socket.h"
@@ -14,6 +15,27 @@
 
 namespace
 {
+
+bool isLinuxIpv6Disabled()
+{
+#if defined(__linux__)
+    auto readFlag = [](const char* path) -> bool
+    {
+        std::ifstream ifs(path);
+        std::string value;
+        if (!(ifs >> value))
+        {
+            return false;
+        }
+        return value == "1";
+    };
+
+    return readFlag("/proc/sys/net/ipv6/conf/all/disable_ipv6") || readFlag("/proc/sys/net/ipv6/conf/default/disable_ipv6") || readFlag("/proc/sys/net/ipv6/conf/lo/disable_ipv6");
+#else
+    return false;
+#endif
+}
+
 struct SocketOpsInit
 {
         SocketOpsInit()
@@ -367,12 +389,19 @@ TEST_CASE("Socket isSelfConnect returns false for normal accepted connection", "
     REQUIRE_FALSE(accepted.isSelfConnect());
 }
 
-TEST_CASE("Socket bindAddress can bind IPv6 loopback socket", "[net][socket]")
+TEST_CASE("Socket bindAddress can bind IPv6 loopback socket when IPv6 is available", "[net][socket]")
 {
     Socket socket = Socket::createTcp(AF_INET6);
     socket.setReuseAddr(true);
     socket.setIpv6Only(true);
-    socket.bindAddress(InetAddress(0, true, true));
+
+    if (isLinuxIpv6Disabled())
+    {
+        REQUIRE_THROWS(socket.bindAddress(InetAddress(0, true, true)));
+        return;
+    }
+
+    REQUIRE_NOTHROW(socket.bindAddress(InetAddress(0, true, true)));
 
     const InetAddress local = socket.localAddress();
 
