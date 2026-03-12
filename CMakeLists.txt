@@ -34,7 +34,11 @@ endforeach()
 
 option(DBASE_BUILD_SHARED "Build shared library" OFF)
 option(DBASE_BUILD_TESTS "Build tests" ON)
-option(DBASE_BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(DBASE_BUILD_BENCHMARKS "Build benchmarks" ON)
+option(DBASE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
+option(DBASE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(DBASE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
+
 option(DBASE_BUILD_EXAMPLES "Build examples" ON)
 option(DBASE_ENABLE_INSTALL "Enable install rules" ON)
 option(DBASE_ENABLE_WARNINGS "Enable compiler warnings" ON)
@@ -43,6 +47,10 @@ option(DBASE_ENABLE_WERROR "Treat warnings as errors" OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(GNUInstallDirs)
+
+include(FetchContent)
+include(CTest)
+
 include(CMakePackageConfigHelpers)
 
 include(ProjectOptions)
@@ -56,10 +64,25 @@ add_subdirectory(code/src)
 
 if(DBASE_BUILD_TESTS)
     enable_testing()
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG v3.5.4
+    )
+    FetchContent_MakeAvailable(Catch2)
     add_subdirectory(tests)
 endif()
 
 if(DBASE_BUILD_BENCHMARKS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        benchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG v1.8.4
+    )
+    FetchContent_MakeAvailable(benchmark)
     add_subdirectory(benchmarks)
 endif()
 

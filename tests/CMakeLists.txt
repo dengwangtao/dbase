@@ -1,14 +1,37 @@
+include(Catch)
+
+
 file(GLOB_RECURSE DBASE_TEST_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cxx
 )
 
-if(DBASE_TEST_SOURCES)
-    foreach(test_src IN LISTS DBASE_TEST_SOURCES)
-        get_filename_component(test_name "${test_src}" NAME_WE)
-
-        add_executable(${test_name} "${test_src}")
-        target_link_libraries(${test_name} PRIVATE dbase::dbase)
-
-        add_test(NAME ${test_name} COMMAND ${test_name})
-    endforeach()
+if (NOT DBASE_TEST_SOURCES)
+    message(STATUS "No test sources found under ${CMAKE_CURRENT_SOURCE_DIR}")
+    return()
 endif()
+
+add_executable(dbase_tests ${DBASE_TEST_SOURCES})
+
+target_link_libraries(dbase_tests
+    PRIVATE
+        dbase
+        Catch2::Catch2WithMain
+)
+
+target_compile_features(dbase_tests PRIVATE cxx_std_20)
+
+target_include_directories(dbase_tests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+
+if (MSVC)
+    target_compile_definitions(dbase_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(dbase_tests PRIVATE -O0 -g3)
+endif()
+
+catch_discover_tests(dbase_tests)
