@@ -1,9 +1,9 @@
 #pragma once
-
 #include "dbase/log/log.h"
-
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -29,7 +29,6 @@ class AsyncLogger
                 PatternStyle style = PatternStyle::Source,
                 std::size_t queueCapacity = 8192,
                 AsyncOverflowPolicy overflowPolicy = AsyncOverflowPolicy::Block);
-
         ~AsyncLogger();
 
         AsyncLogger(const AsyncLogger&) = delete;
@@ -68,7 +67,6 @@ class AsyncLogger
             {
                 return;
             }
-
             log(level, std::format(fmt, std::forward<Args>(args)...), location);
         }
 
@@ -84,13 +82,8 @@ class AsyncLogger
         };
 
     private:
-        [[nodiscard]] LogEvent buildEvent(
-                Level level,
-                std::string_view message,
-                const std::source_location& location) const;
-
         void workerLoop();
-        void enqueueItem(QueueItem item);
+        [[nodiscard]] bool enqueueItem(QueueItem item);
 
     private:
         mutable std::mutex m_mutex;
@@ -98,20 +91,20 @@ class AsyncLogger
         std::condition_variable m_flushCv;
         std::deque<QueueItem> m_queue;
 
-        Level m_level{Level::Info};
-        Level m_flushOn{Level::Error};
+        std::atomic<Level> m_level{Level::Info};
+        std::atomic<Level> m_flushOn{Level::Error};
+
         Formatter m_formatter;
         std::vector<std::shared_ptr<Sink>> m_sinks;
 
         std::size_t m_queueCapacity{0};
         AsyncOverflowPolicy m_overflowPolicy{AsyncOverflowPolicy::Block};
-        std::size_t m_droppedCount{0};
 
-        std::uint64_t m_nextSequence{0};
-        std::uint64_t m_processedSequence{0};
+        std::atomic<std::size_t> m_droppedCount{0};
+        std::atomic<std::uint64_t> m_nextSequence{0};
+        std::atomic<std::uint64_t> m_processedSequence{0};
+        std::atomic<bool> m_stopping{false};
 
-        bool m_stopping{false};
         std::thread m_worker;
 };
-
 }  // namespace dbase::log

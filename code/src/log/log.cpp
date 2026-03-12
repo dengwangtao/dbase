@@ -1,9 +1,7 @@
 #include "dbase/log/log.h"
-
 #include "dbase/log/sink.h"
 #include "dbase/platform/process.h"
 #include "dbase/time/time.h"
-
 #include <filesystem>
 #include <format>
 #include <string>
@@ -36,7 +34,6 @@ void replaceAllInPlace(std::string& text, std::string_view from, std::string_vie
 std::string normalizeFunctionName(std::string_view func)
 {
     std::string text(func);
-
     replaceAllInPlace(text, "__cdecl ", "");
     replaceAllInPlace(text, "__thiscall ", "");
     replaceAllInPlace(text, "__vectorcall ", "");
@@ -66,6 +63,26 @@ std::string formatTimestampUs(std::int64_t timestampUs)
             ms);
 }
 }  // namespace
+
+namespace detail
+{
+LogEvent makeLogEvent(
+        Level level,
+        std::string_view message,
+        const std::source_location& location)
+{
+    LogEvent event;
+    event.level = level;
+    event.message = std::string(message);
+    event.file = baseFileName(location.file_name());
+    event.function = normalizeFunctionName(location.function_name());
+    event.line = location.line();
+    event.pid = dbase::platform::pid();
+    event.tid = dbase::platform::tid();
+    event.timestampUs = dbase::time::nowUs();
+    return event;
+}
+}  // namespace detail
 
 Formatter::Formatter(PatternStyle style)
     : m_style(style)
@@ -122,7 +139,7 @@ std::string Formatter::formatSource(const LogEvent& event) const
 std::string Formatter::formatSourceFunction(const LogEvent& event) const
 {
     return std::format(
-            "[{}] [{}] [{}:{}] {}",
+            "[{}] [{}] [{}:{}] [{}] {}",
             formatTimestampUs(event.timestampUs),
             toSpdlogString(event.level),
             event.file,
@@ -158,20 +175,17 @@ Logger::Logger(PatternStyle style)
 
 void Logger::setLevel(Level level) noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_level = level;
+    m_level.store(level, std::memory_order_release);
 }
 
 Level Logger::level() const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_level;
+    return m_level.load(std::memory_order_acquire);
 }
 
 bool Logger::shouldLog(Level level) const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return static_cast<int>(level) >= static_cast<int>(m_level);
+    return static_cast<int>(level) >= static_cast<int>(m_level.load(std::memory_order_acquire));
 }
 
 void Logger::setPatternStyle(PatternStyle style) noexcept
@@ -188,14 +202,12 @@ PatternStyle Logger::patternStyle() const noexcept
 
 void Logger::setFlushOn(Level level) noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_flushOn = level;
+    m_flushOn.store(level, std::memory_order_release);
 }
 
 Level Logger::flushOn() const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_flushOn;
+    return m_flushOn.load(std::memory_order_acquire);
 }
 
 void Logger::addSink(std::shared_ptr<Sink> sink)
@@ -218,7 +230,6 @@ void Logger::clearSinks()
 void Logger::flush()
 {
     std::vector<std::shared_ptr<Sink>> sinksCopy;
-
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         sinksCopy = m_sinks;
@@ -230,46 +241,27 @@ void Logger::flush()
     }
 }
 
-LogEvent Logger::buildEvent(
-        Level level,
-        std::string_view message,
-        const std::source_location& location) const
-{
-    LogEvent event;
-    event.level = level;
-    event.message = std::string(message);
-    event.file = baseFileName(location.file_name());
-    event.function = normalizeFunctionName(location.function_name());
-    event.line = location.line();
-    event.pid = dbase::platform::pid();
-    event.tid = dbase::platform::tid();
-    event.timestampUs = dbase::time::nowUs();
-    return event;
-}
-
 void Logger::log(
         Level level,
         std::string_view message,
         const std::source_location& location)
 {
+    if (!shouldLog(level))
+    {
+        return;
+    }
+
     std::vector<std::shared_ptr<Sink>> sinksCopy;
     Formatter formatterCopy;
-    Level flushOnLevel{Level::Fatal};
+    const Level flushOnLevel = m_flushOn.load(std::memory_order_acquire);
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-
-        if (static_cast<int>(level) < static_cast<int>(m_level))
-        {
-            return;
-        }
-
         sinksCopy = m_sinks;
         formatterCopy = m_formatter;
-        flushOnLevel = m_flushOn;
     }
 
-    const auto event = buildEvent(level, message, location);
+    const auto event = detail::makeLogEvent(level, message, location);
     const auto formatted = formatterCopy.format(event);
 
     for (const auto& sink : sinksCopy)
@@ -378,5 +370,4 @@ void log(
 {
     defaultLogger().log(level, message, location);
 }
-
 }  // namespace dbase::log

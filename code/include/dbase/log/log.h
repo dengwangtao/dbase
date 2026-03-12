@@ -1,5 +1,5 @@
 #pragma once
-
+#include <atomic>
 #include <cstdint>
 #include <format>
 #include <memory>
@@ -43,15 +43,21 @@ struct LogEvent
         std::int64_t timestampUs{0};
 };
 
+namespace detail
+{
+[[nodiscard]] LogEvent makeLogEvent(
+        Level level,
+        std::string_view message,
+        const std::source_location& location);
+}
+
 class Formatter
 {
     public:
         Formatter() = default;
         explicit Formatter(PatternStyle style);
-
         void setStyle(PatternStyle style) noexcept;
         [[nodiscard]] PatternStyle style() const noexcept;
-
         [[nodiscard]] std::string format(const LogEvent& event) const;
 
     private:
@@ -101,20 +107,13 @@ class Logger
             {
                 return;
             }
-
             log(level, std::format(fmt, std::forward<Args>(args)...), location);
         }
 
     private:
-        [[nodiscard]] LogEvent buildEvent(
-                Level level,
-                std::string_view message,
-                const std::source_location& location) const;
-
-    private:
         mutable std::mutex m_mutex;
-        Level m_level{Level::Info};
-        Level m_flushOn{Level::Error};
+        std::atomic<Level> m_level{Level::Info};
+        std::atomic<Level> m_flushOn{Level::Error};
         Formatter m_formatter;
         std::vector<std::shared_ptr<Sink>> m_sinks;
 };
@@ -123,7 +122,6 @@ class Logger
 [[nodiscard]] const char* toSpdlogString(Level level) noexcept;
 
 Logger& defaultLogger();
-
 void setDefaultLevel(Level level) noexcept;
 void setDefaultPatternStyle(PatternStyle style) noexcept;
 void setDefaultFlushOn(Level level) noexcept;
@@ -149,27 +147,19 @@ void logf(
     {
         return;
     }
-
     defaultLogger().log(level, std::format(fmt, std::forward<Args>(args)...), location);
 }
-
 }  // namespace dbase::log
 
 #define DBASE_LOG_TRACE(...) \
     ::dbase::log::logf(::dbase::log::Level::Trace, std::source_location::current(), __VA_ARGS__)
-
 #define DBASE_LOG_DEBUG(...) \
     ::dbase::log::logf(::dbase::log::Level::Debug, std::source_location::current(), __VA_ARGS__)
-
 #define DBASE_LOG_INFO(...) \
     ::dbase::log::logf(::dbase::log::Level::Info, std::source_location::current(), __VA_ARGS__)
-
 #define DBASE_LOG_WARN(...) \
     ::dbase::log::logf(::dbase::log::Level::Warn, std::source_location::current(), __VA_ARGS__)
-
 #define DBASE_LOG_ERROR(...) \
     ::dbase::log::logf(::dbase::log::Level::Error, std::source_location::current(), __VA_ARGS__)
-
 #define DBASE_LOG_FATAL(...) \
     ::dbase::log::logf(::dbase::log::Level::Fatal, std::source_location::current(), __VA_ARGS__)
-

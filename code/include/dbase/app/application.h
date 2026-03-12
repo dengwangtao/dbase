@@ -1,10 +1,10 @@
 #pragma once
-
 #include "dbase/error/error.h"
-
 #include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -30,27 +30,22 @@ class Application
         using ShutdownCallback = std::function<void(Application&)>;
 
         Application(int argc, char** argv, Options options);
-
         Application(const Application&) = delete;
         Application& operator=(const Application&) = delete;
-
         ~Application();
 
         void setStartupCallback(StartupCallback cb);
         void setShutdownCallback(ShutdownCallback cb);
 
         [[nodiscard]] int run();
-
         void requestStop() noexcept;
         [[nodiscard]] bool stopRequested() const noexcept;
 
         [[nodiscard]] int argc() const noexcept;
         [[nodiscard]] const std::vector<std::string>& argv() const noexcept;
-
         [[nodiscard]] const Options& options() const noexcept;
         [[nodiscard]] const std::string& name() const noexcept;
         [[nodiscard]] const std::string& version() const noexcept;
-
         [[nodiscard]] const std::filesystem::path& workingDirectory() const noexcept;
         [[nodiscard]] const std::filesystem::path& pidFile() const noexcept;
         [[nodiscard]] const std::filesystem::path& configFile() const noexcept;
@@ -72,22 +67,22 @@ class Application
         [[nodiscard]] dbase::Result<void> createPidFileIfNeeded();
         void removePidFileIfNeeded() noexcept;
         [[nodiscard]] dbase::Result<void> installSignalHandlers();
-
         static void onSignal(int signal) noexcept;
 
     private:
         int m_argc{0};
         std::vector<std::string> m_argv;
         Options m_options;
-
         std::unordered_map<std::string, std::string> m_cliOptions;
         std::vector<std::string> m_cliFlags;
         std::vector<std::string> m_positionalArgs;
-
         StartupCallback m_startupCallback;
         ShutdownCallback m_shutdownCallback;
 
         std::atomic<bool> m_stopRequested{false};
+        mutable std::mutex m_stopMutex;
+        std::condition_variable m_stopCv;
+
         bool m_pidFileCreated{false};
 
         static Application* s_instance;

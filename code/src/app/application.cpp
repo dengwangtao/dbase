@@ -1,11 +1,8 @@
 #include "dbase/app/application.h"
-
 #include "dbase/error/error.h"
 #include "dbase/fs/fs.h"
-
 #include <csignal>
 #include <fstream>
-#include <thread>
 
 #if defined(_WIN32)
 #include <Windows.h>
@@ -103,9 +100,10 @@ int Application::run()
         }
     }
 
-    while (!m_stopRequested.load(std::memory_order_acquire))
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::unique_lock<std::mutex> lock(m_stopMutex);
+        m_stopCv.wait(lock, [this]()
+                      { return m_stopRequested.load(std::memory_order_acquire); });
     }
 
     if (m_shutdownCallback)
@@ -118,7 +116,11 @@ int Application::run()
 
 void Application::requestStop() noexcept
 {
-    m_stopRequested.store(true, std::memory_order_release);
+    const bool alreadyStopped = m_stopRequested.exchange(true, std::memory_order_acq_rel);
+    if (!alreadyStopped)
+    {
+        m_stopCv.notify_all();
+    }
 }
 
 bool Application::stopRequested() const noexcept
@@ -190,7 +192,6 @@ std::string Application::getOption(std::string_view name, std::string defaultVal
     {
         return defaultValue;
     }
-
     return it->second;
 }
 
@@ -219,7 +220,6 @@ dbase::Result<void> Application::parseCommandLine()
     for (int i = 1; i < m_argc; ++i)
     {
         const std::string arg = m_argv[static_cast<std::size_t>(i)];
-
         if (arg.rfind("--", 0) == 0)
         {
             const auto eqPos = arg.find('=');
@@ -237,7 +237,6 @@ dbase::Result<void> Application::parseCommandLine()
                 }
                 m_cliOptions[key] = value;
             }
-
             continue;
         }
 
@@ -253,23 +252,19 @@ dbase::Result<void> Application::applyBuiltinOptions()
     {
         m_options.configFile = getOption("config");
     }
-
     if (hasOption("workdir"))
     {
         m_options.workingDirectory = getOption("workdir");
     }
-
     if (hasOption("pid-file"))
     {
         m_options.pidFile = getOption("pid-file");
         m_options.createPidFile = true;
     }
-
     if (hasOption("name"))
     {
         m_options.name = getOption("name");
     }
-
     if (hasOption("version"))
     {
         m_options.version = getOption("version");
@@ -281,7 +276,6 @@ dbase::Result<void> Application::applyBuiltinOptions()
         {
             m_options.name = std::filesystem::path(m_argv.front()).stem().string();
         }
-
         if (m_options.name.empty())
         {
             m_options.name = "application";
@@ -385,5 +379,4 @@ void Application::onSignal(int) noexcept
         s_instance->requestStop();
     }
 }
-
 }  // namespace dbase::app

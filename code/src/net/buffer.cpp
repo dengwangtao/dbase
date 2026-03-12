@@ -660,20 +660,30 @@ const char* Buffer::begin() const noexcept
 
 void Buffer::makeSpace(std::size_t len)
 {
+    const std::size_t readable = readableBytes();
+
+    if (readable == 0)
+    {
+        m_readerIndex = kCheapPrepend;
+        m_writerIndex = kCheapPrepend;
+
+        if (writableBytes() >= len)
+        {
+            return;
+        }
+    }
+
     if (writableBytes() + prependableBytes() - kCheapPrepend >= len)
     {
-        const std::size_t readable = readableBytes();
         std::memmove(begin() + kCheapPrepend, peek(), readable);
         m_readerIndex = kCheapPrepend;
         m_writerIndex = m_readerIndex + readable;
         return;
     }
 
-    const std::size_t readable = readableBytes();
     const std::size_t newSize = std::max(
             m_buffer.size() * 2,
             kCheapPrepend + readable + len);
-
     std::vector<char> newBuffer(newSize);
     std::memcpy(newBuffer.data() + kCheapPrepend, peek(), readable);
     m_buffer.swap(newBuffer);

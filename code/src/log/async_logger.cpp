@@ -1,75 +1,18 @@
 #include "dbase/log/async_logger.h"
-
 #include "dbase/log/sink.h"
-#include "dbase/platform/process.h"
-#include "dbase/time/time.h"
-
-#include <filesystem>
-#include <string>
+#include <deque>
 #include <utility>
 
 namespace dbase::log
 {
-namespace
-{
-std::string baseFileName(std::string_view file)
-{
-    return std::filesystem::path(file).filename().string();
-}
-
-void replaceAllInPlace(std::string& text, std::string_view from, std::string_view to)
-{
-    if (from.empty())
-    {
-        return;
-    }
-
-    std::size_t pos = 0;
-    while ((pos = text.find(from.data(), pos, from.size())) != std::string::npos)
-    {
-        text.replace(pos, from.size(), to.data(), to.size());
-        pos += to.size();
-    }
-}
-
-std::string normalizeFunctionName(std::string_view func)
-{
-    std::string text(func);
-
-    replaceAllInPlace(text, "__cdecl ", "");
-    replaceAllInPlace(text, "__thiscall ", "");
-    replaceAllInPlace(text, "__vectorcall ", "");
-    replaceAllInPlace(text, "__stdcall ", "");
-    replaceAllInPlace(text, "__fastcall ", "");
-    replaceAllInPlace(text, "(void)", "()");
-
-    const auto parenPos = text.find('(');
-    if (parenPos != std::string::npos)
-    {
-        const auto spacePos = text.rfind(' ', parenPos);
-        if (spacePos != std::string::npos)
-        {
-            text.erase(0, spacePos + 1);
-        }
-    }
-
-    return text;
-}
-}  // namespace
-
 AsyncLogger::AsyncLogger(
         PatternStyle style,
         std::size_t queueCapacity,
         AsyncOverflowPolicy overflowPolicy)
     : m_formatter(style),
-      m_queueCapacity(queueCapacity),
+      m_queueCapacity(queueCapacity == 0 ? 8192 : queueCapacity),
       m_overflowPolicy(overflowPolicy)
 {
-    if (m_queueCapacity == 0)
-    {
-        m_queueCapacity = 8192;
-    }
-
     m_sinks.emplace_back(std::make_shared<ConsoleSink>());
     m_worker = std::thread(&AsyncLogger::workerLoop, this);
 }
@@ -81,20 +24,17 @@ AsyncLogger::~AsyncLogger()
 
 void AsyncLogger::setLevel(Level level) noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_level = level;
+    m_level.store(level, std::memory_order_release);
 }
 
 Level AsyncLogger::level() const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_level;
+    return m_level.load(std::memory_order_acquire);
 }
 
 bool AsyncLogger::shouldLog(Level level) const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return static_cast<int>(level) >= static_cast<int>(m_level);
+    return static_cast<int>(level) >= static_cast<int>(m_level.load(std::memory_order_acquire));
 }
 
 void AsyncLogger::setPatternStyle(PatternStyle style) noexcept
@@ -111,14 +51,12 @@ PatternStyle AsyncLogger::patternStyle() const noexcept
 
 void AsyncLogger::setFlushOn(Level level) noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_flushOn = level;
+    m_flushOn.store(level, std::memory_order_release);
 }
 
 Level AsyncLogger::flushOn() const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_flushOn;
+    return m_flushOn.load(std::memory_order_acquire);
 }
 
 void AsyncLogger::addSink(std::shared_ptr<Sink> sink)
@@ -145,8 +83,7 @@ std::size_t AsyncLogger::queueCapacity() const noexcept
 
 std::size_t AsyncLogger::droppedCount() const noexcept
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_droppedCount;
+    return m_droppedCount.load(std::memory_order_acquire);
 }
 
 void AsyncLogger::log(
@@ -154,46 +91,68 @@ void AsyncLogger::log(
         std::string_view message,
         const std::source_location& location)
 {
-    QueueItem item;
-    item.event = buildEvent(level, message, location);
-
+    if (!shouldLog(level))
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        item.sequence = ++m_nextSequence;
+        return;
     }
 
-    enqueueItem(std::move(item));
+    QueueItem item;
+    item.event = detail::makeLogEvent(level, message, location);
+    item.sequence = m_nextSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+    (void)enqueueItem(std::move(item));
 }
 
 void AsyncLogger::flush()
 {
-    QueueItem item;
-    item.flushOnly = true;
-
+    if (m_stopping.load(std::memory_order_acquire))
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        item.sequence = ++m_nextSequence;
+        std::vector<std::shared_ptr<Sink>> sinksCopy;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            sinksCopy = m_sinks;
+        }
+
+        for (const auto& sink : sinksCopy)
+        {
+            sink->flush();
+        }
+        return;
     }
 
-    enqueueItem(item);
+    QueueItem item;
+    item.flushOnly = true;
+    item.sequence = m_nextSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+
+    if (!enqueueItem(item))
+    {
+        std::vector<std::shared_ptr<Sink>> sinksCopy;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            sinksCopy = m_sinks;
+        }
+
+        for (const auto& sink : sinksCopy)
+        {
+            sink->flush();
+        }
+        return;
+    }
 
     std::unique_lock<std::mutex> lock(m_mutex);
     m_flushCv.wait(lock, [this, target = item.sequence]()
-                   { return m_processedSequence >= target; });
+                   { return m_processedSequence.load(std::memory_order_acquire) >= target; });
 }
 
 void AsyncLogger::stop()
 {
+    bool expected = false;
+    if (!m_stopping.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_stopping)
-        {
-            return;
-        }
-        m_stopping = true;
+        return;
     }
 
     m_cv.notify_all();
+    m_flushCv.notify_all();
 
     if (m_worker.joinable())
     {
@@ -201,87 +160,63 @@ void AsyncLogger::stop()
     }
 }
 
-LogEvent AsyncLogger::buildEvent(
-        Level level,
-        std::string_view message,
-        const std::source_location& location) const
-{
-    LogEvent event;
-    event.level = level;
-    event.message = std::string(message);
-    event.file = baseFileName(location.file_name());
-    event.function = normalizeFunctionName(location.function_name());
-    event.line = location.line();
-    event.pid = dbase::platform::pid();
-    event.tid = dbase::platform::tid();
-    event.timestampUs = dbase::time::nowUs();
-    return event;
-}
-
 void AsyncLogger::workerLoop()
 {
     for (;;)
     {
-        QueueItem item;
+        std::deque<QueueItem> batch;
         std::vector<std::shared_ptr<Sink>> sinksCopy;
         Formatter formatterCopy;
-        Level flushOnLevel{Level::Fatal};
+        const Level flushOnLevel = m_flushOn.load(std::memory_order_acquire);
 
         {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_cv.wait(lock, [this]()
-                      { return m_stopping || !m_queue.empty(); });
+                      { return m_stopping.load(std::memory_order_acquire) || !m_queue.empty(); });
 
-            if (m_stopping && m_queue.empty())
+            if (m_stopping.load(std::memory_order_acquire) && m_queue.empty())
             {
                 break;
             }
 
-            item = std::move(m_queue.front());
-            m_queue.pop_front();
-
+            batch.swap(m_queue);
             sinksCopy = m_sinks;
             formatterCopy = m_formatter;
-            flushOnLevel = m_flushOn;
-
-            m_cv.notify_all();
         }
 
-        if (item.flushOnly)
+        m_cv.notify_all();
+
+        for (auto& item : batch)
         {
-            for (const auto& sink : sinksCopy)
+            if (item.flushOnly)
             {
-                sink->flush();
+                for (const auto& sink : sinksCopy)
+                {
+                    sink->flush();
+                }
+
+                m_processedSequence.store(item.sequence, std::memory_order_release);
+                m_flushCv.notify_all();
+                continue;
             }
 
+            const auto formatted = formatterCopy.format(item.event);
+            for (const auto& sink : sinksCopy)
             {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                m_processedSequence = item.sequence;
+                sink->write(item.event, formatted);
             }
+
+            if (static_cast<int>(item.event.level) >= static_cast<int>(flushOnLevel))
+            {
+                for (const auto& sink : sinksCopy)
+                {
+                    sink->flush();
+                }
+            }
+
+            m_processedSequence.store(item.sequence, std::memory_order_release);
             m_flushCv.notify_all();
-            continue;
         }
-
-        const auto formatted = formatterCopy.format(item.event);
-
-        for (const auto& sink : sinksCopy)
-        {
-            sink->write(item.event, formatted);
-        }
-
-        if (static_cast<int>(item.event.level) >= static_cast<int>(flushOnLevel))
-        {
-            for (const auto& sink : sinksCopy)
-            {
-                sink->flush();
-            }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_processedSequence = item.sequence;
-        }
-        m_flushCv.notify_all();
     }
 
     std::vector<std::shared_ptr<Sink>> sinksCopy;
@@ -296,40 +231,40 @@ void AsyncLogger::workerLoop()
     }
 }
 
-void AsyncLogger::enqueueItem(QueueItem item)
+bool AsyncLogger::enqueueItem(QueueItem item)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    if (m_stopping)
+    if (m_stopping.load(std::memory_order_acquire))
     {
-        return;
+        return false;
     }
 
-    if (m_overflowPolicy == AsyncOverflowPolicy::Block)
+    if (m_overflowPolicy == AsyncOverflowPolicy::Block || item.flushOnly)
     {
         m_cv.wait(lock, [this]()
-                  { return m_stopping || m_queue.size() < m_queueCapacity; });
+                  { return m_stopping.load(std::memory_order_acquire) || m_queue.size() < m_queueCapacity; });
 
-        if (m_stopping)
+        if (m_stopping.load(std::memory_order_acquire))
         {
-            return;
+            return false;
         }
 
         m_queue.emplace_back(std::move(item));
         lock.unlock();
         m_cv.notify_all();
-        return;
+        return true;
     }
 
     if (m_queue.size() >= m_queueCapacity)
     {
-        ++m_droppedCount;
-        return;
+        m_droppedCount.fetch_add(1, std::memory_order_acq_rel);
+        return false;
     }
 
     m_queue.emplace_back(std::move(item));
     lock.unlock();
     m_cv.notify_all();
+    return true;
 }
-
 }  // namespace dbase::log

@@ -1,5 +1,4 @@
 #pragma once
-
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -25,21 +24,19 @@ class BlockingQueue
 
         void push(const T& value)
         {
-            emplaceImpl(value);
+            emplace(value);
         }
 
         void push(T&& value)
         {
-            emplaceImpl(std::move(value));
+            emplace(std::move(value));
         }
 
         template <typename... Args>
         void emplace(Args&&... args)
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-
-            m_notFull.wait(lock, [this]()
-                           { return m_stopped || m_capacity == 0 || m_queue.size() < m_capacity; });
+            waitUntilPushable(lock);
 
             if (m_stopped)
             {
@@ -54,7 +51,6 @@ class BlockingQueue
         [[nodiscard]] T pop()
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-
             m_notEmpty.wait(lock, [this]()
                             { return m_stopped || !m_queue.empty(); });
 
@@ -73,7 +69,6 @@ class BlockingQueue
         [[nodiscard]] std::optional<T> popFor(std::uint64_t timeoutMs)
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-
             const bool ready = m_notEmpty.wait_for(
                     lock,
                     std::chrono::milliseconds(timeoutMs),
@@ -106,8 +101,7 @@ class BlockingQueue
 
         [[nodiscard]] std::optional<T> tryPop()
         {
-            std::lock_guard<std::mutex> lock(m_mutex);
-
+            std::unique_lock<std::mutex> lock(m_mutex);
             if (m_queue.empty())
             {
                 return std::nullopt;
@@ -115,6 +109,7 @@ class BlockingQueue
 
             T value = std::move(m_queue.front());
             m_queue.pop_front();
+            lock.unlock();
             m_notFull.notify_one();
             return value;
         }
@@ -122,6 +117,10 @@ class BlockingQueue
         void stop()
         {
             std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_stopped)
+            {
+                return;
+            }
             m_stopped = true;
             m_notEmpty.notify_all();
             m_notFull.notify_all();
@@ -151,22 +150,10 @@ class BlockingQueue
         }
 
     private:
-        template <typename U>
-        void emplaceImpl(U&& value)
+        void waitUntilPushable(std::unique_lock<std::mutex>& lock)
         {
-            std::unique_lock<std::mutex> lock(m_mutex);
-
             m_notFull.wait(lock, [this]()
                            { return m_stopped || m_capacity == 0 || m_queue.size() < m_capacity; });
-
-            if (m_stopped)
-            {
-                throw std::runtime_error("BlockingQueue stopped");
-            }
-
-            m_queue.emplace_back(std::forward<U>(value));
-            lock.unlock();
-            m_notEmpty.notify_one();
         }
 
         template <typename U>
