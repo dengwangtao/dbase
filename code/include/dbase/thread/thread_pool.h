@@ -1,7 +1,6 @@
 #pragma once
 
 #include "dbase/sync/blocking_queue.h"
-#include "dbase/sync/count_down_latch.h"
 #include "dbase/thread/thread.h"
 
 #include <atomic>
@@ -9,7 +8,6 @@
 #include <future>
 #include <functional>
 #include <memory>
-#include <stop_token>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -64,14 +62,21 @@ class ThreadPool
 
             auto future = taskPtr->get_future();
 
-            m_tasks.push([taskPtr]()
-                         { (*taskPtr)(); });
+            try
+            {
+                m_tasks.push([taskPtr]()
+                             { (*taskPtr)(); });
+            }
+            catch (const std::runtime_error&)
+            {
+                throw std::logic_error("ThreadPool is stopped");
+            }
 
             return future;
         }
 
     private:
-        void workerLoop(std::stop_token stopToken, std::size_t index);
+        void workerLoop(std::size_t index);
 
     private:
         const std::size_t m_threadCount{0};
@@ -82,6 +87,6 @@ class ThreadPool
         std::vector<dbase::thread::Thread> m_workers;
 
         std::atomic<bool> m_started{false};
-        std::atomic<bool> m_stopped{false};
+        std::atomic<bool> m_stopped{true};
 };
 }  // namespace dbase::thread

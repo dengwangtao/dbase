@@ -1,4 +1,6 @@
 #pragma once
+
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -77,9 +79,14 @@ class BlockingQueue
                         return m_stopped || !m_queue.empty();
                     });
 
-            if (!ready || m_queue.empty())
+            if (!ready)
             {
                 return std::nullopt;
+            }
+
+            if (m_queue.empty())
+            {
+                throw std::runtime_error("BlockingQueue stopped");
             }
 
             T value = std::move(m_queue.front());
@@ -121,6 +128,7 @@ class BlockingQueue
             {
                 return;
             }
+
             m_stopped = true;
             m_notEmpty.notify_all();
             m_notFull.notify_all();

@@ -1,7 +1,5 @@
 #include "dbase/thread/thread_pool.h"
 
-#include "dbase/thread/current_thread.h"
-
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -46,9 +44,9 @@ void ThreadPool::start()
         const auto name = m_threadNamePrefix + "-" + std::to_string(i + 1);
 
         m_workers.emplace_back(
-                [this, i](std::stop_token stopToken)
+                [this, i]()
                 {
-                    workerLoop(stopToken, i);
+                    workerLoop(i);
                 },
                 name);
     }
@@ -76,11 +74,6 @@ void ThreadPool::stop()
     }
 
     m_tasks.stop();
-
-    for (auto& worker : m_workers)
-    {
-        worker.requestStop();
-    }
 
     for (auto& worker : m_workers)
     {
@@ -118,26 +111,24 @@ std::size_t ThreadPool::pendingTaskCount() const noexcept
     return m_tasks.size();
 }
 
-void ThreadPool::workerLoop(std::stop_token stopToken, std::size_t)
+void ThreadPool::workerLoop(std::size_t)
 {
-    while (!stopToken.stop_requested())
+    while (true)
     {
-        std::optional<Task> task;
         try
         {
-            task = m_tasks.popFor(200);
+            std::optional<Task> task = m_tasks.popFor(200);
+            if (!task.has_value())
+            {
+                continue;
+            }
+
+            task.value()();
         }
         catch (const std::runtime_error&)
         {
             break;
         }
-
-        if (!task.has_value())
-        {
-            continue;
-        }
-
-        task.value()();
     }
 }
 
