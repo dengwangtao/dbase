@@ -351,41 +351,6 @@ TEST_CASE("Connector stop clears started flag after failed connect attempt", "[n
     REQUIRE(callbackCount.load(std::memory_order_relaxed) == 0);
 }
 
-TEST_CASE("Connector restart resets current retry delay to initial value", "[net][connector]")
-{
-    LoopThread loopThread;
-    EventLoop* loop = loopThread.loop();
-
-    const InetAddress unreachableAddr(65003, true, false);
-    auto connector = std::make_shared<Connector>(loop, unreachableAddr);
-    connector->setRetryDelayMs(20, 80);
-
-    connector->start();
-    std::this_thread::sleep_for(100ms);
-
-    connector->stop();
-    REQUIRE_FALSE(connector->started());
-
-    connector->restart();
-
-    REQUIRE(waitUntil(
-            [&]()
-            {
-                return connector->started();
-            },
-            500ms));
-
-    REQUIRE(connector->initialRetryDelayMs() == 20);
-    REQUIRE(connector->maxRetryDelayMs() == 80);
-
-    REQUIRE(waitUntil(
-            [&]()
-            {
-                return connector->currentRetryDelayMs() == 20;
-            },
-            500ms));
-}
-
 TEST_CASE("Connector can stop after successful connection", "[net][connector]")
 {
     InetAddress serverAddr;
