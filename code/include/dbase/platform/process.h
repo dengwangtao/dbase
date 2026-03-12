@@ -8,6 +8,7 @@
 namespace dbase::platform
 {
 [[nodiscard]] std::uint32_t pid() noexcept;
+[[nodiscard]] std::uint32_t ppid() noexcept;
 [[nodiscard]] std::uint64_t tid() noexcept;
 [[nodiscard]] dbase::Result<std::filesystem::path> executablePath();
 }  // namespace dbase::platform

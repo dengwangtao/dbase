@@ -5,6 +5,7 @@
 
 #if defined(_WIN32)
 #include <Windows.h>
+#include <tlhelp32.h>
 #else
 #include <unistd.h>
 #endif
@@ -21,6 +22,41 @@ std::uint32_t pid() noexcept
     return static_cast<std::uint32_t>(::GetCurrentProcessId());
 #else
     return static_cast<std::uint32_t>(::getpid());
+#endif
+}
+
+std::uint32_t ppid() noexcept
+{
+#if defined(_WIN32)
+    const DWORD currentPid = ::GetCurrentProcessId();
+    const HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        return 0;
+    }
+
+    PROCESSENTRY32 entry{};
+    entry.dwSize = sizeof(entry);
+
+    if (!::Process32First(snapshot, &entry))
+    {
+        ::CloseHandle(snapshot);
+        return 0;
+    }
+
+    do
+    {
+        if (entry.th32ProcessID == currentPid)
+        {
+            ::CloseHandle(snapshot);
+            return static_cast<std::uint32_t>(entry.th32ParentProcessID);
+        }
+    } while (::Process32Next(snapshot, &entry));
+
+    ::CloseHandle(snapshot);
+    return 0;
+#else
+    return static_cast<std::uint32_t>(::getppid());
 #endif
 }
 
