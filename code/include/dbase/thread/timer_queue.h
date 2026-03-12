@@ -89,7 +89,7 @@ class TimerQueue
         std::unordered_set<TimerId> m_cancelled;
         std::atomic<TimerId> m_nextId{0};
         std::atomic<bool> m_started{false};
-        std::atomic<bool> m_stopped{false};
+        std::atomic<bool> m_stopped{true};
 
         ThreadPool* m_threadPool{nullptr};
         std::string m_threadName{"timer"};
