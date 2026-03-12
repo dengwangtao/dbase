@@ -1,6 +1,7 @@
 #include "dbase/app/application.h"
 #include "dbase/error/error.h"
 #include "dbase/fs/fs.h"
+#include <chrono>
 #include <csignal>
 #include <fstream>
 
@@ -16,6 +17,8 @@ Application* Application::s_instance = nullptr;
 
 namespace
 {
+volatile std::sig_atomic_t s_stopSignalRequested = 0;
+
 [[nodiscard]] dbase::Result<void> makeInvalidArgument(std::string message)
 {
     return dbase::makeError(dbase::ErrorCode::InvalidArgument, std::move(message));
@@ -60,6 +63,8 @@ int Application::run()
     }
 
     s_instance = this;
+    s_stopSignalRequested = 0;
+    m_stopRequested.store(false, std::memory_order_release);
 
     auto ret = parseCommandLine();
     if (!ret)
@@ -100,10 +105,29 @@ int Application::run()
         }
     }
 
+    for (;;)
     {
-        std::unique_lock<std::mutex> lock(m_stopMutex);
-        m_stopCv.wait(lock, [this]()
-                      { return m_stopRequested.load(std::memory_order_acquire); });
+        {
+            std::unique_lock<std::mutex> lock(m_stopMutex);
+            m_stopCv.wait_for(
+                    lock,
+                    std::chrono::milliseconds(200),
+                    [this]()
+                    {
+                        return m_stopRequested.load(std::memory_order_acquire);
+                    });
+        }
+
+        if (m_stopRequested.load(std::memory_order_acquire))
+        {
+            break;
+        }
+
+        if (s_stopSignalRequested != 0)
+        {
+            requestStop();
+            break;
+        }
     }
 
     if (m_shutdownCallback)
@@ -372,11 +396,8 @@ dbase::Result<void> Application::installSignalHandlers()
     return {};
 }
 
-void Application::onSignal(int) noexcept
+void Application::onSignal(int signal) noexcept
 {
-    if (s_instance != nullptr)
-    {
-        s_instance->requestStop();
-    }
+    s_stopSignalRequested = signal;
 }
 }  // namespace dbase::app
