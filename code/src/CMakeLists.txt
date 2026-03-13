@@ -7,7 +7,13 @@ file(GLOB_RECURSE DBASE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cc"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
 )
+
+file(GLOB_RECURSE DBASE_SOURCES_C CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
+)
+set_source_files_properties(${DBASE_SOURCES_C} PROPERTIES LANGUAGE CXX)
 
 if(DBASE_BUILD_SHARED)
     add_library(dbase SHARED)
@@ -20,6 +26,7 @@ add_library(dbase::dbase ALIAS dbase)
 target_sources(dbase
     PRIVATE
         ${DBASE_SOURCES}
+        ${DBASE_SOURCES_C}
     PUBLIC
         FILE_SET HEADERS
         BASE_DIRS "${PROJECT_SOURCE_DIR}/code/include"
