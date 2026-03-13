@@ -1,12 +1,11 @@
 #include "dbase/config/xml_config.h"
-
 #include "dbase/fs/fs.h"
+#include "ext/pugixml/pugixml.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cctype>
 #include <cstdlib>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -26,6 +25,7 @@ namespace
     {
         ++begin;
     }
+
     while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1])) != 0)
     {
         --end;
@@ -89,6 +89,11 @@ namespace
 {
     const auto value = trim(raw);
 
+    if (value.empty())
+    {
+        return ConfigValue(std::string());
+    }
+
     bool boolValue = false;
     if (tryParseBool(value, boolValue))
     {
@@ -98,6 +103,10 @@ namespace
     std::int64_t intValue = 0;
     if (tryParseInt(value, intValue))
     {
+        if (intValue >= 0)
+        {
+            return ConfigValue(static_cast<std::uint64_t>(intValue));
+        }
         return ConfigValue(intValue);
     }
 
@@ -115,28 +124,10 @@ namespace
     return dbase::Error(dbase::ErrorCode::ParseError, std::move(message));
 }
 
-[[nodiscard]] bool hasElementChildren(const pugi::xml_node& node)
-{
-    for (auto child : node.children())
-    {
-        if (child.type() == pugi::node_element)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-[[nodiscard]] std::string nodeXmlString(const pugi::xml_node& node)
-{
-    std::ostringstream oss;
-    node.print(oss, "", pugi::format_raw);
-    return oss.str();
-}
-
 [[nodiscard]] std::string collectDirectText(const pugi::xml_node& node)
 {
     std::string result;
+
     for (auto child : node.children())
     {
         if (child.type() == pugi::node_pcdata || child.type() == pugi::node_cdata)
@@ -144,7 +135,70 @@ namespace
             result += child.value();
         }
     }
+
     return trim(result);
+}
+
+[[nodiscard]] ConfigValue buildElementValue(const pugi::xml_node& node)
+{
+    ConfigValue::Object result;
+
+    for (auto attr : node.attributes())
+    {
+        result.emplace(std::string("@") + attr.name(), parseScalar(attr.value()));
+    }
+
+    std::unordered_map<std::string, std::vector<pugi::xml_node>> groupedChildren;
+    std::vector<std::string> order;
+
+    for (auto child : node.children())
+    {
+        if (child.type() != pugi::node_element)
+        {
+            continue;
+        }
+
+        const std::string name = child.name();
+        if (groupedChildren.find(name) == groupedChildren.end())
+        {
+            order.push_back(name);
+        }
+        groupedChildren[name].push_back(child);
+    }
+
+    for (const auto& name : order)
+    {
+        auto& group = groupedChildren[name];
+        if (group.size() == 1)
+        {
+            result.emplace(name, buildElementValue(group.front()));
+            continue;
+        }
+
+        ConfigValue::Array arr;
+        arr.reserve(group.size());
+
+        for (const auto& child : group)
+        {
+            arr.push_back(buildElementValue(child));
+        }
+
+        result.emplace(name, ConfigValue(std::move(arr)));
+    }
+
+    const auto text = collectDirectText(node);
+
+    if (result.empty())
+    {
+        return parseScalar(text);
+    }
+
+    if (!text.empty())
+    {
+        result.emplace("#text", ConfigValue(text));
+    }
+
+    return ConfigValue(std::move(result));
 }
 }  // namespace
 
@@ -153,7 +207,7 @@ dbase::Result<XmlConfig> XmlConfig::fromFile(const std::filesystem::path& path)
     auto textRet = dbase::fs::readText(path);
     if (!textRet)
     {
-        return dbase::makeErrorResult<XmlConfig>(textRet.error().code(), textRet.error().message());
+        return dbase::Result<XmlConfig>(textRet.error());
     }
     return parse(textRet.value());
 }
@@ -171,95 +225,21 @@ dbase::Result<XmlConfig> XmlConfig::parse(std::string_view content)
 
     if (!result)
     {
-        std::ostringstream oss;
-        oss << result.description() << " (offset=" << result.offset << ")";
-        return dbase::Result<XmlConfig>(makeParseError(oss.str()));
+        return dbase::Result<XmlConfig>(
+                makeParseError(std::string(result.description()) + " (offset=" + std::to_string(result.offset) + ")"));
     }
 
-    XmlConfig config;
-    const auto root = doc.document_element();
-    if (!root)
+    const auto rootNode = doc.document_element();
+    if (!rootNode)
     {
         return dbase::Result<XmlConfig>(makeParseError("xml document has no root element"));
     }
 
-    config.flatten(root, std::string(root.name()));
+    ConfigValue::Object root;
+    root.emplace(rootNode.name(), buildElementValue(rootNode));
+
+    XmlConfig config;
+    config.setRoot(ConfigValue(std::move(root)));
     return config;
-}
-
-void XmlConfig::flatten(const pugi::xml_node& node, std::string path)
-{
-    if (!node)
-    {
-        return;
-    }
-
-    for (auto attr : node.attributes())
-    {
-        std::string attrPath = path;
-        if (!attrPath.empty())
-        {
-            attrPath += '.';
-        }
-        attrPath += '@';
-        attrPath += attr.name();
-        set(std::move(attrPath), parseScalar(attr.value()));
-    }
-
-    const bool hasChildren = hasElementChildren(node);
-    const auto text = collectDirectText(node);
-
-    if (!hasChildren)
-    {
-        set(path, parseScalar(text));
-        return;
-    }
-
-    set(path, ConfigValue(nodeXmlString(node)));
-
-    std::vector<std::pair<pugi::xml_node, std::string>> elementChildren;
-    for (auto child : node.children())
-    {
-        if (child.type() == pugi::node_element)
-        {
-            elementChildren.emplace_back(child, std::string(child.name()));
-        }
-    }
-
-    std::unordered_map<std::string, std::size_t> counts;
-    for (const auto& item : elementChildren)
-    {
-        ++counts[item.second];
-    }
-
-    std::unordered_map<std::string, std::size_t> indices;
-    for (const auto& item : elementChildren)
-    {
-        const auto& child = item.first;
-        const auto& name = item.second;
-
-        std::string childPath = path;
-        if (!childPath.empty())
-        {
-            childPath += '.';
-        }
-        childPath += name;
-
-        if (counts[name] > 1)
-        {
-            const std::size_t index = indices[name]++;
-            childPath += '.';
-            childPath += std::to_string(index);
-        }
-
-        flatten(child, std::move(childPath));
-    }
-
-    if (!text.empty())
-    {
-        std::string textPath = path;
-        textPath += ".#text";
-        set(std::move(textPath), parseScalar(text));
-    }
 }
 }  // namespace dbase::config

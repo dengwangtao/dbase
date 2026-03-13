@@ -1,6 +1,6 @@
 #include "dbase/config/toml_config.h"
-
 #include "dbase/fs/fs.h"
+#include "ext/toml++/toml.h"
 
 #include <cstdint>
 #include <sstream>
@@ -16,7 +16,7 @@ namespace
     return dbase::Error(dbase::ErrorCode::ParseError, std::move(message));
 }
 
-[[nodiscard]] std::string formatValue(const toml::node& node)
+[[nodiscard]] std::string formatNode(const toml::node& node)
 {
     std::ostringstream oss;
     node.visit([&oss](const auto& concrete)
@@ -24,7 +24,7 @@ namespace
     return oss.str();
 }
 
-[[nodiscard]] ConfigValue toScalarConfigValue(const toml::node& node)
+[[nodiscard]] dbase::Result<ConfigValue> convertToml(const toml::node& node)
 {
     if (const auto* value = node.as_boolean())
     {
@@ -33,7 +33,12 @@ namespace
 
     if (const auto* value = node.as_integer())
     {
-        return ConfigValue(static_cast<std::int64_t>(value->get()));
+        const auto raw = value->get();
+        if (raw >= 0)
+        {
+            return ConfigValue(static_cast<std::uint64_t>(raw));
+        }
+        return ConfigValue(static_cast<std::int64_t>(raw));
     }
 
     if (const auto* value = node.as_floating_point())
@@ -46,22 +51,47 @@ namespace
         return ConfigValue(std::string(value->get()));
     }
 
-    if (const auto* value = node.as_date())
+    if (node.is_date() || node.is_time() || node.is_date_time())
     {
-        return ConfigValue(formatValue(*value));
+        return ConfigValue(formatNode(node));
     }
 
-    if (const auto* value = node.as_time())
+    if (const auto* array = node.as_array())
     {
-        return ConfigValue(formatValue(*value));
+        ConfigValue::Array result;
+        result.reserve(array->size());
+
+        for (const auto& child : *array)
+        {
+            auto childRet = convertToml(child);
+            if (!childRet)
+            {
+                return dbase::Result<ConfigValue>(childRet.error());
+            }
+            result.push_back(std::move(childRet.value()));
+        }
+
+        return ConfigValue(std::move(result));
     }
 
-    if (const auto* value = node.as_date_time())
+    if (const auto* table = node.as_table())
     {
-        return ConfigValue(formatValue(*value));
+        ConfigValue::Object result;
+
+        for (const auto& [key, child] : *table)
+        {
+            auto childRet = convertToml(child);
+            if (!childRet)
+            {
+                return dbase::Result<ConfigValue>(childRet.error());
+            }
+            result.emplace(std::string(key.str()), std::move(childRet.value()));
+        }
+
+        return ConfigValue(std::move(result));
     }
 
-    return ConfigValue(formatValue(node));
+    return dbase::Result<ConfigValue>(makeParseError("unsupported toml node type"));
 }
 }  // namespace
 
@@ -70,7 +100,7 @@ dbase::Result<TomlConfig> TomlConfig::fromFile(const std::filesystem::path& path
     auto textRet = dbase::fs::readText(path);
     if (!textRet)
     {
-        return dbase::makeErrorResult<TomlConfig>(textRet.error().code(), textRet.error().message());
+        return dbase::Result<TomlConfig>(textRet.error());
     }
     return parse(textRet.value());
 }
@@ -96,59 +126,14 @@ dbase::Result<TomlConfig> TomlConfig::parse(std::string_view content)
         return dbase::Result<TomlConfig>(makeParseError(ex.what()));
     }
 
+    auto rootRet = convertToml(root);
+    if (!rootRet)
+    {
+        return dbase::Result<TomlConfig>(rootRet.error());
+    }
+
     TomlConfig config;
-    for (const auto& [key, child] : root)
-    {
-        config.flatten(child, std::string(key.str()));
-    }
+    config.setRoot(std::move(rootRet.value()));
     return config;
-}
-
-void TomlConfig::flatten(const toml::node& node, std::string path)
-{
-    if (const auto* table = node.as_table())
-    {
-        if (!path.empty())
-        {
-            set(path, ConfigValue(formatValue(node)));
-        }
-
-        for (const auto& [key, child] : *table)
-        {
-            std::string childPath = path;
-            if (!childPath.empty())
-            {
-                childPath += '.';
-            }
-            childPath += std::string(key.str());
-            flatten(child, std::move(childPath));
-        }
-        return;
-    }
-
-    if (const auto* array = node.as_array())
-    {
-        if (!path.empty())
-        {
-            set(path, ConfigValue(formatValue(node)));
-        }
-
-        for (std::size_t i = 0; i < array->size(); ++i)
-        {
-            std::string childPath = path;
-            if (!childPath.empty())
-            {
-                childPath += '.';
-            }
-            childPath += std::to_string(i);
-            flatten(*array->get(i), std::move(childPath));
-        }
-        return;
-    }
-
-    if (!path.empty())
-    {
-        set(std::move(path), toScalarConfigValue(node));
-    }
 }
 }  // namespace dbase::config

@@ -139,7 +139,7 @@ TEST_CASE("Connector setRetryDelayMs normalizes invalid values", "[net][connecto
     LoopThread loopThread;
     EventLoop* loop = loopThread.loop();
 
-    auto connector = std::make_shared<Connector>(loop, loopbackAddress(12345));
+    auto connector = std::make_shared<Connector>(loop, loopbackAddress(65001));
 
     connector->setRetryDelayMs(-10, -1);
     REQUIRE(connector->initialRetryDelayMs() == 1);

@@ -161,7 +161,7 @@ TEST_CASE("Config require returns NotFound for missing key", "[config][config]")
 
     REQUIRE(value.hasError());
     REQUIRE(value.error().code() == ErrorCode::NotFound);
-    REQUIRE_THAT(value.error().message(), Catch::Matchers::ContainsSubstring("required config key not found"));
+    REQUIRE_THAT(value.error().message(), Catch::Matchers::ContainsSubstring("config path not found"));
 }
 
 TEST_CASE("Config set overwrites existing key", "[config][config]")

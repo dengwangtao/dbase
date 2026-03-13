@@ -1,8 +1,8 @@
 #include "dbase/config/json_config.h"
-
 #include "dbase/fs/fs.h"
+#include "ext/nlohmann/json.hpp"
 
-#include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -17,13 +17,13 @@ using Json = nlohmann::json;
     return dbase::Error(dbase::ErrorCode::ParseError, std::move(message));
 }
 
-[[nodiscard]] bool isIntegralNumber(const Json& value) noexcept
+[[nodiscard]] dbase::Result<ConfigValue> convertJson(const Json& value)
 {
-    return value.is_number_integer() || value.is_number_unsigned();
-}
+    if (value.is_null())
+    {
+        return ConfigValue(nullptr);
+    }
 
-[[nodiscard]] ConfigValue toScalarConfigValue(const Json& value)
-{
     if (value.is_boolean())
     {
         return ConfigValue(value.get<bool>());
@@ -36,7 +36,7 @@ using Json = nlohmann::json;
 
     if (value.is_number_unsigned())
     {
-        return ConfigValue(static_cast<std::int64_t>(value.get<std::uint64_t>()));
+        return ConfigValue(value.get<std::uint64_t>());
     }
 
     if (value.is_number_float())
@@ -49,12 +49,42 @@ using Json = nlohmann::json;
         return ConfigValue(value.get<std::string>());
     }
 
-    if (value.is_null())
+    if (value.is_array())
     {
-        return ConfigValue(std::string());
+        ConfigValue::Array arr;
+        arr.reserve(value.size());
+
+        for (const auto& item : value)
+        {
+            auto itemRet = convertJson(item);
+            if (!itemRet)
+            {
+                return dbase::Result<ConfigValue>(itemRet.error());
+            }
+            arr.push_back(std::move(itemRet.value()));
+        }
+
+        return ConfigValue(std::move(arr));
     }
 
-    return ConfigValue(value.dump());
+    if (value.is_object())
+    {
+        ConfigValue::Object obj;
+
+        for (auto it = value.begin(); it != value.end(); ++it)
+        {
+            auto childRet = convertJson(it.value());
+            if (!childRet)
+            {
+                return dbase::Result<ConfigValue>(childRet.error());
+            }
+            obj.emplace(it.key(), std::move(childRet.value()));
+        }
+
+        return ConfigValue(std::move(obj));
+    }
+
+    return dbase::Result<ConfigValue>(makeParseError("unsupported json value type"));
 }
 }  // namespace
 
@@ -63,7 +93,7 @@ dbase::Result<JsonConfig> JsonConfig::fromFile(const std::filesystem::path& path
     auto textRet = dbase::fs::readText(path);
     if (!textRet)
     {
-        return dbase::makeErrorResult<JsonConfig>(textRet.error().code(), textRet.error().message());
+        return dbase::Result<JsonConfig>(textRet.error());
     }
     return parse(textRet.value());
 }
@@ -89,75 +119,14 @@ dbase::Result<JsonConfig> JsonConfig::parse(std::string_view content)
         return dbase::Result<JsonConfig>(makeParseError(ex.what()));
     }
 
+    auto rootRet = convertJson(root);
+    if (!rootRet)
+    {
+        return dbase::Result<JsonConfig>(rootRet.error());
+    }
+
     JsonConfig config;
-
-    if (root.is_object())
-    {
-        for (auto it = root.begin(); it != root.end(); ++it)
-        {
-            config.flatten(it.value(), it.key());
-        }
-        return config;
-    }
-
-    if (root.is_array())
-    {
-        for (std::size_t i = 0; i < root.size(); ++i)
-        {
-            config.flatten(root[i], std::to_string(i));
-        }
-        return config;
-    }
-
-    config.set("value", toScalarConfigValue(root));
+    config.setRoot(std::move(rootRet.value()));
     return config;
-}
-
-void JsonConfig::flatten(const Json& value, std::string path)
-{
-    if (value.is_object())
-    {
-        if (!path.empty())
-        {
-            set(path, ConfigValue(value.dump()));
-        }
-
-        for (auto it = value.begin(); it != value.end(); ++it)
-        {
-            std::string childPath = path;
-            if (!childPath.empty())
-            {
-                childPath += '.';
-            }
-            childPath += it.key();
-            flatten(it.value(), std::move(childPath));
-        }
-        return;
-    }
-
-    if (value.is_array())
-    {
-        if (!path.empty())
-        {
-            set(path, ConfigValue(value.dump()));
-        }
-
-        for (std::size_t i = 0; i < value.size(); ++i)
-        {
-            std::string childPath = path;
-            if (!childPath.empty())
-            {
-                childPath += '.';
-            }
-            childPath += std::to_string(i);
-            flatten(value[i], std::move(childPath));
-        }
-        return;
-    }
-
-    if (!path.empty())
-    {
-        set(std::move(path), toScalarConfigValue(value));
-    }
 }
 }  // namespace dbase::config

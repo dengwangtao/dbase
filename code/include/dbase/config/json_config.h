@@ -1,7 +1,6 @@
 #pragma once
 
 #include "dbase/config/config.h"
-#include "ext/nlohmann/json.hpp"
 
 #include <filesystem>
 #include <string_view>
@@ -18,6 +17,5 @@ class JsonConfig : public Config
 
     private:
         [[nodiscard]] static dbase::Result<JsonConfig> parse(std::string_view content);
-        void flatten(const nlohmann::json& value, std::string path);
 };
 }  // namespace dbase::config

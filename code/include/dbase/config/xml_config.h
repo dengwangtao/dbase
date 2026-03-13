@@ -1,7 +1,6 @@
 #pragma once
 
 #include "dbase/config/config.h"
-#include "ext/pugixml/pugixml.hpp"
 
 #include <filesystem>
 #include <string_view>
@@ -18,6 +17,5 @@ class XmlConfig : public Config
 
     private:
         [[nodiscard]] static dbase::Result<XmlConfig> parse(std::string_view content);
-        void flatten(const pugi::xml_node& node, std::string path);
 };
 }  // namespace dbase::config

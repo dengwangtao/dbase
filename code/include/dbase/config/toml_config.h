@@ -1,7 +1,6 @@
 #pragma once
 
 #include "dbase/config/config.h"
-#include "ext/toml++/toml.h"
 
 #include <filesystem>
 #include <string_view>
@@ -18,6 +17,5 @@ class TomlConfig : public Config
 
     private:
         [[nodiscard]] static dbase::Result<TomlConfig> parse(std::string_view content);
-        void flatten(const toml::node& node, std::string path);
 };
 }  // namespace dbase::config
