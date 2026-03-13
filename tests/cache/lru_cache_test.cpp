@@ -7,6 +7,9 @@
 #include "dbase/cache/lru_cache.h"
 #include "dbase/error/error.h"
 
+
+// leetcode test: https://leetcode.cn/problems/lru-cache/solutions/3924012/markyi-xia-zi-ji-de-lrucache-lib-by-deng-pi3c/
+
 namespace
 {
 using dbase::ErrorCode;
