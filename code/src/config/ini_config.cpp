@@ -1,4 +1,5 @@
 #include "dbase/config/ini_config.h"
+#include "dbase/str/str.h"
 
 #include "dbase/fs/fs.h"
 
@@ -13,97 +14,24 @@ namespace dbase::config
 {
 namespace
 {
-[[nodiscard]] std::string trim(std::string_view input)
-{
-    std::size_t begin = 0;
-    std::size_t end = input.size();
-
-    while (begin < end && std::isspace(static_cast<unsigned char>(input[begin])) != 0)
-    {
-        ++begin;
-    }
-
-    while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1])) != 0)
-    {
-        --end;
-    }
-
-    return std::string(input.substr(begin, end - begin));
-}
-
-[[nodiscard]] std::string toLower(std::string_view input)
-{
-    std::string result(input);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char ch)
-                   { return static_cast<char>(std::tolower(ch)); });
-    return result;
-}
-
-[[nodiscard]] bool tryParseBool(std::string_view text, bool& out)
-{
-    const auto lowered = toLower(trim(text));
-    if (lowered == "true" || lowered == "1" || lowered == "yes" || lowered == "on")
-    {
-        out = true;
-        return true;
-    }
-
-    if (lowered == "false" || lowered == "0" || lowered == "no" || lowered == "off")
-    {
-        out = false;
-        return true;
-    }
-
-    return false;
-}
-
-[[nodiscard]] bool tryParseInt(std::string_view text, std::int64_t& out)
-{
-    const auto s = trim(text);
-    if (s.empty())
-    {
-        return false;
-    }
-
-    const char* begin = s.data();
-    const char* end = s.data() + s.size();
-    const auto [ptr, ec] = std::from_chars(begin, end, out);
-    return ec == std::errc() && ptr == end;
-}
-
-[[nodiscard]] bool tryParseDouble(std::string_view text, double& out)
-{
-    const auto s = trim(text);
-    if (s.empty())
-    {
-        return false;
-    }
-
-    char* parseEnd = nullptr;
-    out = std::strtod(s.c_str(), &parseEnd);
-    return parseEnd == s.c_str() + s.size();
-}
 
 [[nodiscard]] ConfigValue parseValue(std::string_view raw)
 {
-    const auto value = trim(raw);
+    const auto value = dbase::str::trim(raw);
 
-    bool boolValue = false;
-    if (tryParseBool(value, boolValue))
+    if (auto boolValue = dbase::str::toBool(value); boolValue)
     {
-        return ConfigValue(boolValue);
+        return ConfigValue(boolValue.value());
     }
 
-    std::int64_t intValue = 0;
-    if (tryParseInt(value, intValue))
+    if (auto intValue = dbase::str::toInt64(value); intValue)
     {
-        return ConfigValue(intValue);
+        return ConfigValue(intValue.value());
     }
 
-    double doubleValue = 0.0;
-    if (tryParseDouble(value, doubleValue))
+    if (auto doubleValue = dbase::str::toDouble(value); doubleValue)
     {
-        return ConfigValue(doubleValue);
+        return ConfigValue(doubleValue.value());
     }
 
     return ConfigValue(value);
@@ -407,7 +335,7 @@ dbase::Result<IniConfig> IniConfig::parse(std::string_view content)
             line.pop_back();
         }
 
-        const auto trimmed = trim(line);
+        const auto trimmed = dbase::str::trim(line);
         if (trimmed.empty())
         {
             continue;
@@ -425,7 +353,7 @@ dbase::Result<IniConfig> IniConfig::parse(std::string_view content)
                 return dbase::Result<IniConfig>(makeParseError(lineNo, "invalid section syntax"));
             }
 
-            currentSection = trim(std::string_view(trimmed).substr(1, trimmed.size() - 2));
+            currentSection = dbase::str::trim(std::string_view(trimmed).substr(1, trimmed.size() - 2));
             if (currentSection.empty())
             {
                 return dbase::Result<IniConfig>(makeParseError(lineNo, "empty section name"));
@@ -440,7 +368,7 @@ dbase::Result<IniConfig> IniConfig::parse(std::string_view content)
             return dbase::Result<IniConfig>(makeParseError(lineNo, "missing '='"));
         }
 
-        auto key = trim(std::string_view(trimmed).substr(0, pos));
+        auto key = dbase::str::trim(std::string_view(trimmed).substr(0, pos));
         auto value = std::string_view(trimmed).substr(pos + 1);
 
         if (key.empty())

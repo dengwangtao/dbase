@@ -13,7 +13,7 @@ int main()
 host = 127.0.0.1
 port = 9781
 workers = 4
-enable_ssl = false
+enable_ssl = yes
 
 [log]
 level = info
