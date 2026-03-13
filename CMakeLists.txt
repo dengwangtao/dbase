@@ -38,7 +38,6 @@ option(DBASE_BUILD_BENCHMARKS "Build benchmarks" ON)
 option(DBASE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(DBASE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(DBASE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
-
 option(DBASE_BUILD_EXAMPLES "Build examples" ON)
 option(DBASE_ENABLE_INSTALL "Enable install rules" ON)
 option(DBASE_ENABLE_WARNINGS "Enable compiler warnings" ON)
@@ -47,12 +46,9 @@ option(DBASE_ENABLE_WERROR "Treat warnings as errors" OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(GNUInstallDirs)
-
 include(FetchContent)
 include(CTest)
-
 include(CMakePackageConfigHelpers)
-
 include(ProjectOptions)
 include(ProjectWarnings)
 include(ProjectUtils)
@@ -64,12 +60,16 @@ add_subdirectory(code/src)
 
 if(DBASE_BUILD_TESTS)
     enable_testing()
+
     FetchContent_Declare(
         Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
         GIT_TAG v3.5.4
     )
     FetchContent_MakeAvailable(Catch2)
+
+    list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
+
     add_subdirectory(tests)
 endif()
 
@@ -83,6 +83,7 @@ if(DBASE_BUILD_BENCHMARKS)
         GIT_TAG v1.8.4
     )
     FetchContent_MakeAvailable(benchmark)
+
     add_subdirectory(benchmarks)
 endif()
 
@@ -91,11 +92,6 @@ if(DBASE_BUILD_EXAMPLES)
 endif()
 
 if(DBASE_ENABLE_INSTALL)
-    install(
-        DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/code/include/"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-    )
-
     install(
         EXPORT dbaseTargets
         FILE dbaseTargets.cmake
