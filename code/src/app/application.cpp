@@ -244,15 +244,19 @@ dbase::Result<void> Application::parseCommandLine()
     for (int i = 1; i < m_argc; ++i)
     {
         const std::string arg = m_argv[static_cast<std::size_t>(i)];
+
+        // long option
         if (arg.rfind("--", 0) == 0)
         {
             const auto eqPos = arg.find('=');
             if (eqPos == std::string::npos)
             {
+                // --option
                 m_cliFlags.emplace_back(arg.substr(2));
             }
             else
             {
+                // --option=value
                 const auto key = arg.substr(2, eqPos - 2);
                 const auto value = arg.substr(eqPos + 1);
                 if (key.empty())
@@ -328,7 +332,7 @@ dbase::Result<void> Application::prepareWorkingDirectory()
     {
         return dbase::makeError(
                 dbase::ErrorCode::IOError,
-                "set current_path failed: " + m_options.workingDirectory.string() + ": " + ec.message());
+                std::format("set current_path failed: {}: {}", m_options.workingDirectory.string(), ec.message()));
     }
 
     return {};
@@ -352,7 +356,7 @@ dbase::Result<void> Application::createPidFileIfNeeded()
     {
         return dbase::makeError(
                 dbase::ErrorCode::IOError,
-                "open pid file failed: " + m_options.pidFile.string());
+                std::format("open pid file failed: {}", m_options.pidFile.string()));
     }
 
 #if defined(_WIN32)
@@ -366,7 +370,7 @@ dbase::Result<void> Application::createPidFileIfNeeded()
     {
         return dbase::makeError(
                 dbase::ErrorCode::IOError,
-                "write pid file failed: " + m_options.pidFile.string());
+                std::format("write pid file failed: {}", m_options.pidFile.string()));
     }
 
     m_pidFileCreated = true;

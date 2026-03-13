@@ -30,7 +30,7 @@ int main(int argc, char** argv)
 
         for (const auto& [k, v] : self.cliOptions())
         {
-            DBASE_LOG_INFO("cli option {}={}", k, v);
+            DBASE_LOG_INFO("cli option {}:{}", k, v);
         }
 
         for (const auto& flag : self.cliFlags())

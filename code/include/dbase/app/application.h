@@ -73,9 +73,9 @@ class Application
         int m_argc{0};
         std::vector<std::string> m_argv;
         Options m_options;
-        std::unordered_map<std::string, std::string> m_cliOptions;
-        std::vector<std::string> m_cliFlags;
-        std::vector<std::string> m_positionalArgs;
+        std::unordered_map<std::string, std::string> m_cliOptions;  // --option=value
+        std::vector<std::string> m_cliFlags;                        // --flag
+        std::vector<std::string> m_positionalArgs;                  // a b c -d
         StartupCallback m_startupCallback;
         ShutdownCallback m_shutdownCallback;
 
