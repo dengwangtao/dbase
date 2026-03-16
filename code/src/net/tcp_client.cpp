@@ -1,5 +1,4 @@
 #include "dbase/net/tcp_client.h"
-
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
@@ -24,11 +23,13 @@ TcpClient::TcpClient(EventLoop* loop, const InetAddress& serverAddr, std::string
 TcpClient::~TcpClient()
 {
     stopKeepAliveCheck();
+    m_connectRequested.store(false, std::memory_order_release);
 
     TcpConnection::Ptr conn;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         conn = m_connection;
+        m_connection.reset();
     }
 
     if (conn)
@@ -118,12 +119,15 @@ void TcpClient::setRetryDelayMs(int initialDelayMs, int maxDelayMs) noexcept
 
 void TcpClient::connect()
 {
+    m_connectRequested.store(true, std::memory_order_release);
     startKeepAliveCheck();
     m_connector->start();
 }
 
 void TcpClient::disconnect()
 {
+    m_connectRequested.store(false, std::memory_order_release);
+
     TcpConnection::Ptr conn;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -134,12 +138,28 @@ void TcpClient::disconnect()
     {
         conn->shutdown();
     }
+    else
+    {
+        m_connector->stop();
+    }
 }
 
 void TcpClient::stop()
 {
+    m_connectRequested.store(false, std::memory_order_release);
     stopKeepAliveCheck();
     m_connector->stop();
+
+    TcpConnection::Ptr conn;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        conn = m_connection;
+    }
+
+    if (conn)
+    {
+        conn->forceClose();
+    }
 }
 
 EventLoop* TcpClient::ownerLoop() const noexcept
@@ -167,10 +187,14 @@ void TcpClient::newConnection(Socket socket)
 {
     m_loop->assertInLoopThread();
 
+    if (!m_connectRequested.load(std::memory_order_acquire))
+    {
+        return;
+    }
+
     const auto peerAddr = socket.peerAddress();
     const auto localAddr = socket.localAddress();
     const auto connName = m_name + "-conn";
-
     auto conn = std::make_shared<TcpConnection>(
             m_loop,
             connName,
@@ -200,13 +224,16 @@ void TcpClient::removeConnection(const TcpConnection::Ptr& conn)
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_connection.reset();
+        if (m_connection == conn)
+        {
+            m_connection.reset();
+        }
     }
 
     m_loop->queueInLoop([conn]()
                         { conn->connectDestroyed(); });
 
-    if (m_retry)
+    if (m_retry && m_connectRequested.load(std::memory_order_acquire))
     {
         m_connector->restart();
     }
@@ -225,17 +252,14 @@ void TcpClient::startKeepAliveCheck()
         {
             return std::min(std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2), m_heartbeatInterval);
         }
-
         if (m_idleTimeout.count() > 0)
         {
             return std::max(std::chrono::milliseconds(1000), m_idleTimeout / 2);
         }
-
         if (m_heartbeatInterval.count() > 0)
         {
             return m_heartbeatInterval;
         }
-
         return std::chrono::milliseconds(0);
     }();
 
@@ -271,7 +295,6 @@ void TcpClient::checkKeepAlive()
     }
 
     const auto idle = conn->idleFor();
-
     if (m_idleTimeout.count() > 0 && idle >= m_idleTimeout)
     {
         if (m_idleCallback)
@@ -290,7 +313,6 @@ void TcpClient::checkKeepAlive()
         const auto lastProbe = conn->lastProbeAt();
         const bool neverProbed = (lastProbe == TcpConnection::TimePoint{});
         const bool probeExpired = !neverProbed && conn->probeIdleFor() >= m_heartbeatInterval;
-
         if (idle >= m_heartbeatInterval && (neverProbed || probeExpired))
         {
             conn->markKeepAliveProbeSent();
@@ -298,5 +320,4 @@ void TcpClient::checkKeepAlive()
         }
     }
 }
-
 }  // namespace dbase::net

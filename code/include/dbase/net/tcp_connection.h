@@ -1,16 +1,15 @@
 #pragma once
-
 #include "dbase/net/buffer.h"
 #include "dbase/net/channel.h"
 #include "dbase/net/event_loop.h"
 #include "dbase/net/inet_address.h"
 #include "dbase/net/length_field_codec.h"
 #include "dbase/net/socket.h"
-
 #include <any>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -56,13 +55,10 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
                 Socket socket,
                 const InetAddress& localAddr,
                 const InetAddress& peerAddr);
-
         TcpConnection(const TcpConnection&) = delete;
         TcpConnection& operator=(const TcpConnection&) = delete;
-
         TcpConnection(TcpConnection&&) = delete;
         TcpConnection& operator=(TcpConnection&&) = delete;
-
         ~TcpConnection();
 
         [[nodiscard]] EventLoop* ownerLoop() const noexcept;
@@ -70,10 +66,8 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] State state() const noexcept;
         [[nodiscard]] bool connected() const noexcept;
         [[nodiscard]] bool disconnected() const noexcept;
-
         [[nodiscard]] const InetAddress& localAddress() const noexcept;
         [[nodiscard]] const InetAddress& peerAddress() const noexcept;
-
         [[nodiscard]] SocketType fd() const noexcept;
 
         [[nodiscard]] Buffer& inputBuffer() noexcept;
@@ -95,10 +89,9 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         [[nodiscard]] bool autoReadFlowControlEnabled() const noexcept;
         [[nodiscard]] std::size_t readPauseHighWaterMark() const noexcept;
         [[nodiscard]] std::size_t readResumeLowWaterMark() const noexcept;
-
         [[nodiscard]] bool edgeTriggered() const noexcept;
-        void setEdgeTriggered(bool on) noexcept;
 
+        void setEdgeTriggered(bool on) noexcept;
         void setConnectionCallback(ConnectionCallback cb);
         void setMessageCallback(MessageCallback cb);
         void setFrameMessageCallback(FrameMessageCallback cb);
@@ -106,7 +99,6 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void setCloseCallback(CloseCallback cb);
         void setErrorCallback(ErrorCallback cb);
         void setHighWaterMarkCallback(HighWaterMarkCallback cb);
-
         void setLengthFieldCodec(std::shared_ptr<LengthFieldCodec> codec);
         [[nodiscard]] const std::shared_ptr<LengthFieldCodec>& codec() const noexcept;
 
@@ -115,7 +107,6 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         void enableAutoReadFlowControl(std::size_t pauseHighWaterMark, std::size_t resumeLowWaterMark) noexcept;
         void disableAutoReadFlowControl() noexcept;
-
         void startRead();
         void stopRead();
 
@@ -138,14 +129,11 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
 
         void connectEstablished();
         void connectDestroyed();
-
         void send(std::string_view data);
         void send(Buffer& buffer);
         void sendFrame(std::string_view payload);
-
         void shutdown();
         void forceClose();
-
         void markKeepAliveProbeSent() noexcept;
 
     private:
@@ -155,51 +143,42 @@ class TcpConnection : public std::enable_shared_from_this<TcpConnection>
         void sendInLoop(std::string data);
         void shutdownInLoop();
         void forceCloseInLoop();
-
         void handleRead();
         void handleWrite();
         void handleClose();
         void handleError();
+        void handleErrorAndClose(int err);
         void handleCodecMessages();
-
         [[nodiscard]] bool handleOutputBufferAppend(std::string_view data);
         void notifyHighWaterMark(std::size_t bytes);
         void handleOutputOverflow();
         void touchActive() noexcept;
         void maybePauseReadForFlowControl();
         void maybeResumeReadForFlowControl();
-
         void setState(State state) noexcept;
 
     private:
         EventLoop* m_loop{nullptr};
         std::string m_name;
-        State m_state{State::Connecting};
+        std::atomic<State> m_state{State::Connecting};
         Socket m_socket;
         InetAddress m_localAddr;
         InetAddress m_peerAddr;
         std::unique_ptr<Channel> m_channel;
         Buffer m_inputBuffer;
         Buffer m_outputBuffer;
-
         std::shared_ptr<LengthFieldCodec> m_codec;
-
         std::size_t m_maxOutputBufferBytes{64 * 1024 * 1024};
         OutputOverflowPolicy m_outputOverflowPolicy{OutputOverflowPolicy::CloseConnection};
-
         bool m_autoReadFlowControlEnabled{false};
         std::size_t m_readPauseHighWaterMark{0};
         std::size_t m_readResumeLowWaterMark{0};
         bool m_readPausedByFlowControl{false};
-
         bool m_edgeTriggered{false};
-
         std::atomic<std::int64_t> m_connectedAtTick{0};
         std::atomic<std::int64_t> m_lastActiveAtTick{0};
         std::atomic<std::int64_t> m_lastProbeAtTick{0};
-
         std::any m_context;
-
         ConnectionCallback m_connectionCallback;
         MessageCallback m_messageCallback;
         FrameMessageCallback m_frameMessageCallback;

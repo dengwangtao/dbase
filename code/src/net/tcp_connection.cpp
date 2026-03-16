@@ -23,12 +23,12 @@ bool isWouldBlockError(int err) noexcept
 #endif
 }
 
-bool isConnectionResetError(int err) noexcept
+bool isConnectionClosedError(int err) noexcept
 {
 #if defined(_WIN32)
-    return err == WSAECONNRESET || err == WSAECONNABORTED;
+    return err == WSAECONNRESET || err == WSAECONNABORTED || err == WSAESHUTDOWN;
 #else
-    return err == ECONNRESET || err == EPIPE;
+    return err == ECONNRESET || err == EPIPE || err == ENOTCONN;
 #endif
 }
 
@@ -84,17 +84,17 @@ const std::string& TcpConnection::name() const noexcept
 
 TcpConnection::State TcpConnection::state() const noexcept
 {
-    return m_state;
+    return m_state.load(std::memory_order_acquire);
 }
 
 bool TcpConnection::connected() const noexcept
 {
-    return m_state == State::Connected;
+    return state() == State::Connected;
 }
 
 bool TcpConnection::disconnected() const noexcept
 {
-    return m_state == State::Disconnected;
+    return state() == State::Disconnected;
 }
 
 const InetAddress& TcpConnection::localAddress() const noexcept
@@ -316,11 +316,11 @@ void TcpConnection::startRead()
     auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         {
-        if (!self->m_channel->isReading())
-        {
-            self->m_channel->enableReading();
-        }
-        self->m_readPausedByFlowControl = false; });
+                            if (self->m_channel && !self->m_channel->isReading())
+                            {
+                                self->m_channel->enableReading();
+                            }
+                            self->m_readPausedByFlowControl = false; });
 }
 
 void TcpConnection::stopRead()
@@ -342,10 +342,10 @@ void TcpConnection::stopRead()
     auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         {
-        if (self->m_channel->isReading())
-        {
-            self->m_channel->disableReading();
-        } });
+                            if (self->m_channel && self->m_channel->isReading())
+                            {
+                                self->m_channel->disableReading();
+                            } });
 }
 
 void TcpConnection::setContext(std::any context)
@@ -371,7 +371,7 @@ void TcpConnection::clearContext() noexcept
 void TcpConnection::connectEstablished()
 {
     m_loop->assertInLoopThread();
-    if (m_state != State::Connecting)
+    if (state() != State::Connecting)
     {
         throw std::logic_error("TcpConnection::connectEstablished invalid state");
     }
@@ -401,7 +401,9 @@ void TcpConnection::connectEstablished()
 void TcpConnection::connectDestroyed()
 {
     m_loop->assertInLoopThread();
-    if (m_state != State::Disconnected)
+
+    const auto oldState = state();
+    if (oldState != State::Disconnected)
     {
         setState(State::Disconnected);
         if (m_connectionCallback)
@@ -419,7 +421,8 @@ void TcpConnection::connectDestroyed()
 
 void TcpConnection::send(std::string_view data)
 {
-    if (m_state == State::Disconnected || data.empty())
+    const auto currentState = state();
+    if (currentState == State::Disconnected || data.empty())
     {
         return;
     }
@@ -457,7 +460,7 @@ void TcpConnection::sendFrame(std::string_view payload)
 
 void TcpConnection::shutdown()
 {
-    if (m_state != State::Connected)
+    if (state() != State::Connected)
     {
         return;
     }
@@ -476,7 +479,7 @@ void TcpConnection::shutdown()
 
 void TcpConnection::forceClose()
 {
-    if (m_state == State::Disconnected)
+    if (state() == State::Disconnected)
     {
         return;
     }
@@ -514,7 +517,9 @@ TcpConnection::TimePoint TcpConnection::fromTick(std::int64_t tick) noexcept
 void TcpConnection::sendInLoop(std::string data)
 {
     m_loop->assertInLoopThread();
-    if (m_state == State::Disconnected || data.empty())
+
+    const auto currentState = state();
+    if (currentState == State::Disconnected || data.empty())
     {
         return;
     }
@@ -554,11 +559,7 @@ void TcpConnection::sendInLoop(std::string data)
             return;
         }
 
-        if (m_errorCallback)
-        {
-            m_errorCallback(shared_from_this(), err);
-        }
-        handleClose();
+        handleErrorAndClose(err);
         return;
     }
 
@@ -577,6 +578,11 @@ void TcpConnection::sendInLoop(std::string data)
 void TcpConnection::shutdownInLoop()
 {
     m_loop->assertInLoopThread();
+    if (state() == State::Disconnected)
+    {
+        return;
+    }
+
     if (!m_channel->isWriting() && m_outputBuffer.readableBytes() == 0)
     {
         m_socket.shutdownWrite();
@@ -586,7 +592,7 @@ void TcpConnection::shutdownInLoop()
 void TcpConnection::forceCloseInLoop()
 {
     m_loop->assertInLoopThread();
-    if (m_state == State::Disconnected)
+    if (state() == State::Disconnected)
     {
         return;
     }
@@ -602,7 +608,7 @@ void TcpConnection::handleRead()
         auto ret = m_inputBuffer.readFdResult(m_socket.fd());
         if (!ret)
         {
-            handleError();
+            handleErrorAndClose(static_cast<int>(ret.error().code()));
             return;
         }
 
@@ -647,7 +653,7 @@ void TcpConnection::handleWrite()
         auto ret = m_outputBuffer.writeFdResult(m_socket.fd());
         if (!ret)
         {
-            handleError();
+            handleErrorAndClose(static_cast<int>(ret.error().code()));
             return;
         }
 
@@ -684,7 +690,7 @@ void TcpConnection::handleWrite()
         m_writeCompleteCallback(shared_from_this());
     }
 
-    if (m_state == State::Disconnecting)
+    if (state() == State::Disconnecting)
     {
         shutdownInLoop();
     }
@@ -693,20 +699,19 @@ void TcpConnection::handleWrite()
 void TcpConnection::handleClose()
 {
     m_loop->assertInLoopThread();
-    if (m_state == State::Disconnected)
+    if (state() == State::Disconnected)
     {
         return;
     }
 
     setState(State::Disconnected);
     m_channel->disableAll();
-    auto self = shared_from_this();
 
+    auto self = shared_from_this();
     if (m_connectionCallback)
     {
         m_connectionCallback(self);
     }
-
     if (m_closeCallback)
     {
         m_closeCallback(self);
@@ -717,9 +722,23 @@ void TcpConnection::handleError()
 {
     m_loop->assertInLoopThread();
     const int err = SocketOps::getSocketError(m_socket.fd());
+    if (err == 0)
+    {
+        return;
+    }
+    handleErrorAndClose(err);
+}
+
+void TcpConnection::handleErrorAndClose(int err)
+{
     if (m_errorCallback)
     {
         m_errorCallback(shared_from_this(), err);
+    }
+
+    if (!isWouldBlockError(err))
+    {
+        handleClose();
     }
 }
 
@@ -847,6 +866,6 @@ void TcpConnection::maybeResumeReadForFlowControl()
 
 void TcpConnection::setState(State state) noexcept
 {
-    m_state = state;
+    m_state.store(state, std::memory_order_release);
 }
 }  // namespace dbase::net

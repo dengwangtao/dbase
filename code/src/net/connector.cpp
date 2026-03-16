@@ -1,7 +1,5 @@
 #include "dbase/net/connector.h"
-
 #include "dbase/net/socket_ops.h"
-
 #include <chrono>
 #include <stdexcept>
 #include <utility>
@@ -16,7 +14,7 @@ namespace dbase::net
 {
 namespace
 {
-bool isInProgressError(int err) noexcept
+[[nodiscard]] bool isInProgressError(int err) noexcept
 {
 #if defined(_WIN32)
     return err == WSAEWOULDBLOCK || err == WSAEINPROGRESS || err == WSAEALREADY;
@@ -25,26 +23,16 @@ bool isInProgressError(int err) noexcept
 #endif
 }
 
-// clang-format off
-bool isRetryableConnectError(int err) noexcept
+[[nodiscard]] bool isRetryableConnectError(int err) noexcept
 {
 #if defined(_WIN32)
-    return err == WSAECONNREFUSED ||
-           err == WSAENETUNREACH ||
-           err == WSAEHOSTUNREACH ||
-           err == WSAETIMEDOUT ||
-           err == WSAECONNRESET;
+    return err == WSAECONNREFUSED || err == WSAENETUNREACH || err == WSAEHOSTUNREACH || err == WSAETIMEDOUT || err == WSAECONNRESET;
 #else
-    return err == ECONNREFUSED ||
-           err == ENETUNREACH ||
-           err == EHOSTUNREACH ||
-           err == ETIMEDOUT ||
-           err == ECONNRESET;
+    return err == ECONNREFUSED || err == ENETUNREACH || err == EHOSTUNREACH || err == ETIMEDOUT || err == ECONNRESET;
 #endif
 }
-// clang-format on
 
-int lastSocketErrorCode() noexcept
+[[nodiscard]] int lastSocketErrorCode() noexcept
 {
 #if defined(_WIN32)
     return ::WSAGetLastError();
@@ -68,15 +56,17 @@ Connector::~Connector()
 {
     cancelRetry();
 
-    if (m_channel)
+    if (m_loop->isInLoopThread())
     {
-        m_channel.reset();
+        stopInLoop();
     }
-
-    if (m_socket != kInvalidSocket)
+    else
     {
-        SocketOps::close(m_socket);
-        m_socket = kInvalidSocket;
+        if (m_socket != kInvalidSocket)
+        {
+            SocketOps::close(m_socket);
+            m_socket = kInvalidSocket;
+        }
     }
 
     m_state = State::Disconnected;
@@ -94,7 +84,6 @@ void Connector::setRetryDelayMs(int initialDelayMs, int maxDelayMs) noexcept
     {
         initialDelayMs = 1;
     }
-
     if (maxDelayMs < initialDelayMs)
     {
         maxDelayMs = initialDelayMs;
@@ -132,7 +121,6 @@ void Connector::stop()
 {
     m_started = false;
     cancelRetry();
-
     auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         { self->stopInLoop(); });
@@ -143,12 +131,11 @@ void Connector::restart()
     cancelRetry();
     m_retryDelayMs = m_initialRetryDelayMs;
     m_started = true;
-
     auto self = shared_from_this();
     m_loop->queueInLoop([self]()
                         {
-        self->setState(State::Disconnected);
-        self->startInLoop(); });
+                            self->setState(State::Disconnected);
+                            self->startInLoop(); });
 }
 
 EventLoop* Connector::ownerLoop() const noexcept
@@ -174,12 +161,10 @@ bool Connector::started() const noexcept
 void Connector::startInLoop()
 {
     m_loop->assertInLoopThread();
-
     if (!m_started)
     {
         return;
     }
-
     if (m_state == State::Disconnected)
     {
         connect();
@@ -195,6 +180,16 @@ void Connector::stopInLoop()
     {
         const SocketType sock = removeAndResetChannelRaw();
         setState(State::Disconnected);
+        if (sock != kInvalidSocket)
+        {
+            SocketOps::close(sock);
+        }
+        return;
+    }
+
+    if (m_channel)
+    {
+        const SocketType sock = removeAndResetChannelRaw();
         if (sock != kInvalidSocket)
         {
             SocketOps::close(sock);
@@ -261,7 +256,6 @@ void Connector::connecting(Socket socket)
 void Connector::handleWrite()
 {
     m_loop->assertInLoopThread();
-
     if (m_state != State::Connecting)
     {
         return;
@@ -269,7 +263,6 @@ void Connector::handleWrite()
 
     const SocketType sock = removeAndResetChannelRaw();
     const int err = SocketOps::getSocketError(sock);
-
     if (err != 0)
     {
         SocketOps::close(sock);
@@ -280,6 +273,7 @@ void Connector::handleWrite()
     Socket socket(sock);
     if (socket.isSelfConnect())
     {
+        socket.reset();
         retry();
         return;
     }
@@ -300,7 +294,6 @@ void Connector::handleWrite()
 void Connector::handleError()
 {
     m_loop->assertInLoopThread();
-
     if (m_state != State::Connecting)
     {
         return;
@@ -311,26 +304,21 @@ void Connector::handleError()
     {
         SocketOps::close(sock);
     }
-
     retry();
 }
 
 void Connector::retry()
 {
     m_loop->assertInLoopThread();
-
     setState(State::Disconnected);
-
     if (!m_started)
     {
         return;
     }
 
     cancelRetry();
-
     auto self = shared_from_this();
     const auto delay = std::chrono::milliseconds(m_retryDelayMs);
-
     m_retryTimerId = m_loop->runAfter(delay, [self]()
                                       { self->startInLoop(); });
 
@@ -364,7 +352,6 @@ SocketType Connector::removeAndResetChannelRaw()
     m_loop->assertInLoopThread();
 
     SocketType sock = m_socket;
-
     if (m_channel)
     {
         m_channel->disableAll();
@@ -388,5 +375,4 @@ void Connector::setState(State state) noexcept
 {
     m_state = state;
 }
-
 }  // namespace dbase::net
