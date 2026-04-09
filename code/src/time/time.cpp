@@ -1,5 +1,6 @@
 #include "dbase/time/time.h"
 
+#include <chrono>
 #include <ctime>
 #include <thread>
 
@@ -57,6 +58,13 @@ std::int64_t nowUs()
 std::int64_t nowMs()
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   SystemClock::now().time_since_epoch())
+            .count();
+}
+
+std::int64_t nowS()
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(
                    SystemClock::now().time_since_epoch())
             .count();
 }

@@ -53,6 +53,7 @@ class Timestamp
 [[nodiscard]] std::int64_t nowNs();
 [[nodiscard]] std::int64_t nowUs();
 [[nodiscard]] std::int64_t nowMs();
+[[nodiscard]] std::int64_t nowS();
 
 [[nodiscard]] std::int64_t steadyNowNs();
 [[nodiscard]] std::int64_t steadyNowUs();
