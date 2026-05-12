@@ -44,6 +44,7 @@ dbase_apply_warnings(dbase)
 
 target_compile_definitions(dbase
     PUBLIC
+        ASIO_STANDALONE
         $<$<PLATFORM_ID:Windows>:NOMINMAX>
         $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>
         $<$<CONFIG:Debug>:DBASE_DEBUG>
