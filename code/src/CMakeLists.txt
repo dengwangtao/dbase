@@ -36,6 +36,7 @@ target_sources(dbase
 target_include_directories(dbase
     PUBLIC
         "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/code/include>"
+        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/code/include/ext/asio>"
         "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 )
 
